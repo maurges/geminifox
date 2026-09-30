@@ -44,7 +44,6 @@ function messageToNative(messageB64) {
     };
     const r = new Promise((resolve, reject) => {
         natport.onMessage.addListener(msg => {
-            console.log("response", msg);
             natport.disconnect();
             resolve(msg);
         })
@@ -55,7 +54,6 @@ function messageToNative(messageB64) {
 
 function proxyConnected(port) {
     async function onMessage(messageB64) {
-        console.log("posting", messageB64);
 
         const resp = await messageToNative(messageB64);
         port.postMessage(resp);
