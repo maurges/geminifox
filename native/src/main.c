@@ -3,10 +3,138 @@
 #include "mbedtls/ssl.h"
 #include "mbedtls/entropy.h"
 #include "mbedtls/ctr_drbg.h"
+#include "mbedtls/base64.h"
 #include <string.h>
+#include <unistd.h>
 
-int main() {
-    int ret = 1, len;
+struct connect_info {
+    char * host;
+    char * port;
+    unsigned char * request; // Not null terminated
+    size_t request_length;
+};
+
+struct response {
+    const char * header;
+    const char * body;
+};
+
+
+static char * strclone(const char * source, size_t length) {
+    char * out = malloc(length + 1);
+    memcpy(out, source, length);
+    out[length] = '\0';
+    return out;
+}
+
+static int parse_url(const char * url, struct connect_info * out) {
+    out->host = NULL;
+    out->port = NULL;
+    out->request = NULL;
+
+    // Find start of the domain name
+    const char proto[] = "gemini://";
+    size_t i = 0;
+    while (url[i] == proto[i]) {
+        ++i;
+    }
+    if (i != sizeof(proto) - 1) {
+        fprintf(stderr, "incorrect protocol at %lu: %c != %c\n", i, url[i], proto[i]);
+        return 1;
+    }
+    size_t domain_start = i;
+
+    // Find end of domain name
+    while (url[i] != ':' && url[i] != '/' && url[i] != '\0') {
+        ++i;
+    }
+    size_t domain_end = i;
+    size_t domain_length = domain_end - domain_start;
+    out->host = strclone(url + domain_start, domain_length);
+
+    // Non-standard port
+    if (url[i] == ':') {
+        ++i;
+        size_t port_start = i;
+        while (url[i] != '/') {
+            ++i;
+        }
+        size_t port_end = i;
+        size_t port_length = port_end - port_start;
+        out->port = strclone(url + port_start, port_length);
+    }
+
+    // Now make the request string
+    size_t url_length = strlen(url);
+    out->request = malloc(url_length + 2);
+    memcpy(out->request, url, url_length);
+    out->request[url_length] = '\r';
+    out->request[url_length+1] = '\n';
+    out->request_length = url_length + 2;
+
+    return 0;
+}
+
+static void free_connect_info(struct connect_info * x) {
+    if (x->host) {
+        free(x->host);
+    }
+    if (x->port) {
+        free(x->port);
+    }
+    if (x->request) {
+        free(x->request);
+    }
+}
+
+struct bytevec {
+    unsigned char * data;
+    size_t length;
+    size_t capacity;
+};
+
+struct bytevec bytevec_empty() {
+    struct bytevec r = {
+        .data = NULL,
+        .length = 0,
+        .capacity = 0,
+    };
+    return r;
+}
+
+static void bytevec_append(struct bytevec * vec, unsigned char * buf, size_t length) {
+    if (vec->data == NULL) {
+        vec->capacity = 256;
+        while (vec->capacity < length) {
+            vec->capacity *= 2;
+        }
+        vec->data = malloc(vec->capacity);
+    } else if (vec->length + length >= vec->capacity) {
+        // realloc
+        while (vec->capacity < vec->length + length) {
+            vec->capacity *= 2;
+        }
+        unsigned char * data = malloc(vec->capacity);
+
+        memcpy(data, vec->data, vec->length);
+        free(vec->data);
+        vec->data = data;
+    }
+    memcpy(vec->data + vec->length, buf, length);
+    vec->length += length;
+}
+
+static void free_bytevec(struct bytevec * vec) {
+    if (vec->data) {
+        free(vec->data);
+    }
+    vec->data = NULL;
+    vec->length = 0;
+    vec->capacity = 0;
+}
+
+static int connect(struct connect_info * cinfo, struct bytevec * response) {
+    int ret = 1;
     int exit_code = MBEDTLS_EXIT_FAILURE;
     const char * pers = "ssl_client1";
 
@@ -32,26 +160,24 @@ int main() {
         mbedtls_entropy_func,
         &entropy,
         (const unsigned char *)pers,
-        strlen( pers )
+        strlen(pers)
     );
     if (ret != 0) {
-        printf(" failed\n  ! mbedtls_ctr_drbg_seed returned %d\n", ret);
+        fprintf(stderr, " failed\n  ! mbedtls_ctr_drbg_seed returned %d\n", ret);
         goto exit;
     }
 
     // Initialize certificates - skipped
 
     // Start the connection
-    const char * server_name = "transjovian.org";
-    const char * server_port = "1965";
     ret = mbedtls_net_connect(
         &server_fd,
-        server_name,
-        server_port,
+        cinfo->host,
+        cinfo->port ? cinfo->port : "1965",
         MBEDTLS_NET_PROTO_TCP
     );
     if (ret != 0) {
-        printf(" failed\n  ! mbedtls_net_connect returned %d\n\n", ret);
+        fprintf(stderr, " failed\n  ! mbedtls_net_connect returned %d\n\n", ret);
         goto exit;
     }
 
@@ -63,7 +189,7 @@ int main() {
         MBEDTLS_SSL_PRESET_DEFAULT
     );
     if (ret != 0) {
-        printf(" failed\n  ! mbedtls_ssl_config_defaults returned %d\n\n", ret);
+        fprintf(stderr, " failed\n  ! mbedtls_ssl_config_defaults returned %d\n\n", ret);
         goto exit;
     }
 
@@ -75,13 +201,13 @@ int main() {
     // Apply the config to to the ssl struct
     ret = mbedtls_ssl_setup(&ssl, &conf);
     if (ret != 0) {
-        printf(" failed\n  ! mbedtls_ssl_setup returned %d\n\n", ret);
+        fprintf(stderr, " failed\n  ! mbedtls_ssl_setup returned %d\n\n", ret);
         goto exit;
     }
     // Set the hostname on ssl
-    ret = mbedtls_ssl_set_hostname(&ssl, server_name);
+    ret = mbedtls_ssl_set_hostname(&ssl, cinfo->host);
     if (ret != 0) {
-        printf(" failed\n  ! mbedtls_ssl_set_hostname returned %d\n\n", ret);
+        fprintf(stderr, " failed\n  ! mbedtls_ssl_set_hostname returned %d\n\n", ret);
         goto exit;
     }
     // Apply the ssl to the connection
@@ -90,7 +216,7 @@ int main() {
     // Perform the handshake
     while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            printf(
+            fprintf(stderr, 
                 " failed\n  ! mbedtls_ssl_handshake returned -0x%x\n\n",
                 (unsigned int) -ret
             );
@@ -100,11 +226,9 @@ int main() {
     // Verify the certificate - skipped
 
     // Write the request
-    const char * request = "gemini://transjovian.org/titan/index\r\n";
-    size_t request_len = strlen(request);
-    while ((ret = mbedtls_ssl_write(&ssl, (const unsigned char *)request, request_len)) <= 0) {
+    while ((ret = mbedtls_ssl_write(&ssl, cinfo->request, cinfo->request_length)) <= 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            printf(" failed\n  ! mbedtls_ssl_write returned %d\n\n", ret);
+            fprintf(stderr, " failed\n  ! mbedtls_ssl_write returned %d\n\n", ret);
             goto exit;
         }
     }
@@ -112,10 +236,7 @@ int main() {
     // Read the response from server
     unsigned char buf[4096];
     do {
-        size_t len = sizeof(buf) - 1;
-        memset(buf, 0, sizeof(buf));
-
-        ret = mbedtls_ssl_read(&ssl, buf, len);
+        ret = mbedtls_ssl_read(&ssl, buf, sizeof(buf));
 
         if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
             // So how does this work? We don't update the buffer, do we just overwrite it?
@@ -123,24 +244,18 @@ int main() {
         }
 
         if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
-            printf(
-                "The return value %d from mbedtls_ssl_read() means that the server\n"
-                "closed the connection first. We're ok with that.\n",
-                ret
-            );
+            // Server closed the connection at the end of request, as expected
             break;
         }
 
         // ret holds the length read
+        bytevec_append(response, buf, ret);
+
         if (ret == 0) {
             // EOF
             break;
         }
-
-        printf("%s", buf);
     } while (1);
-    printf("\n");
-    fflush(stdout);
 
     mbedtls_ssl_close_notify(&ssl);
     if (ret == 0 || ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
@@ -156,5 +271,89 @@ exit:
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_entropy_free(&entropy);
 
-    mbedtls_exit(exit_code);
+    return exit_code;
+}
+
+int main(int argc, const char ** argv) {
+    if (argc > 2) {
+        fprintf(stderr, "Usage: %s [REQ]", argv[0]);
+        return 1;
+    }
+
+    struct connect_info c;
+
+    if (argc == 1) {
+        fprintf(stderr, "stdio mode, awaiting command\n");
+
+        // Maximum gemini url length is 1024
+        unsigned char buf[1025];
+        unsigned char buf_b64_[1500];
+        unsigned char * buf_b64 = buf_b64_; // Because we want to mutate the pointer later
+
+        size_t b64_size = fread(buf_b64, 1, sizeof(buf_b64_), stdin);
+        int err = ferror(stdin);
+        if (err != 0) {
+            fprintf(stderr, "error reading data\n");
+            return 1;
+        }
+        // strip trailing whitespace
+        while (buf_b64[b64_size - 1] == '\n') {
+            b64_size -= 1;
+        }
+        // skip json framing if present
+        if (buf_b64[0] == '"') {
+            buf_b64 += 1;
+            b64_size -= 2;
+        }
+
+        size_t size = 0;
+        err = mbedtls_base64_decode(buf, sizeof(buf), &size, buf_b64, b64_size);
+        buf[size] = '\0';
+        if (err != 0) {
+            fprintf(stderr, "failed to parse base64\n");
+            return err;
+        }
+
+        err = parse_url((char *)buf, &c);
+        if (err != 0) {
+            fprintf(stderr, "failed to parse url\n");
+            return err;
+        }
+    } else {
+        int r = parse_url(argv[1], &c);
+        if (r != 0) {
+            fprintf(stderr, "failed to parse\n");
+            return r;
+        }
+    }
+
+    struct bytevec response = bytevec_empty();
+    int r = connect(&c, &response);
+    free_connect_info(&c);
+
+    if (argc == 1) {
+        // print the result as base64 json, for stdio mode
+        size_t out_length = 0;
+        int r = mbedtls_base64_encode(NULL, 0, &out_length, response.data, response.length);
+        if (r != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL && r != 0) {
+            fprintf(stderr, "base64 encode failed\n");
+        }
+        unsigned char * buf = malloc(out_length + 2);
+        r = mbedtls_base64_encode(buf + 1, out_length, &out_length, response.data, response.length);
+        if (r != 0) {
+            fprintf(stderr, "base64 encode failed\n");
+        }
+        // add json string quotes
+        buf[0] = '"';
+        buf[out_length + 1] = '"';
+
+        fwrite(buf, 1, out_length + 2, stdout);
+    } else {
+        fwrite(response.data, 1, response.length, stdout);
+    }
+    fflush(stdout);
+
+    free_bytevec(&response);
+
+    return r;
 }
