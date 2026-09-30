@@ -33,9 +33,8 @@ function expect(x, s) {
 /****************************/
 
 
-// todo: listen for messages, and resend them to the native program
-
 function messageToNative(messageB64) {
+    // Todo: I want support for status messages, like connecting to network, dns failure, etc
     const natport = browser.runtime.connectNative("gemini_browser");
     natport.onDisconnect.addListener(p => {
         console.log("Disconnected with error", p);
