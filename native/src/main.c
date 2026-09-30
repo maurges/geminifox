@@ -6,6 +6,7 @@
 #include "mbedtls/base64.h"
 #include <string.h>
 #include <unistd.h>
+#include <stdint.h>
 
 struct connect_info {
     char * host;
@@ -275,22 +276,31 @@ exit:
 }
 
 int main(int argc, const char ** argv) {
-    if (argc > 2) {
+    if (argc > 3) {
         fprintf(stderr, "Usage: %s [REQ]", argv[0]);
         return 1;
     }
 
+    // firefox gives the path to the manifest and the path to the script. I don't care
+    bool stdio_mode = argc == 1 || argc == 3;
+
     struct connect_info c;
 
-    if (argc == 1) {
+    if (stdio_mode) {
         fprintf(stderr, "stdio mode, awaiting command\n");
+
+        // The message is preceded by its length in four bytes
+        uint32_t length = 0;
+        fread(&length, sizeof(length), 1, stdin);
+        fprintf(stderr, "will read %u bytes", length);
+        fflush(stderr);
 
         // Maximum gemini url length is 1024
         unsigned char buf[1025];
         unsigned char buf_b64_[1500];
         unsigned char * buf_b64 = buf_b64_; // Because we want to mutate the pointer later
 
-        size_t b64_size = fread(buf_b64, 1, sizeof(buf_b64_), stdin);
+        size_t b64_size = fread(buf_b64, 1, length, stdin);
         int err = ferror(stdin);
         if (err != 0) {
             fprintf(stderr, "error reading data\n");
@@ -331,7 +341,7 @@ int main(int argc, const char ** argv) {
     int r = connect(&c, &response);
     free_connect_info(&c);
 
-    if (argc == 1) {
+    if (stdio_mode) {
         // print the result as base64 json, for stdio mode
         size_t out_length = 0;
         int r = mbedtls_base64_encode(NULL, 0, &out_length, response.data, response.length);
@@ -346,8 +356,12 @@ int main(int argc, const char ** argv) {
         // add json string quotes
         buf[0] = '"';
         buf[out_length + 1] = '"';
+        out_length += 2;
 
-        fwrite(buf, 1, out_length + 2, stdout);
+        // Again the framing
+        uint32_t out_length_ = out_length;
+        fwrite(&out_length_, sizeof(out_length_), 1, stdout);
+        fwrite(buf, 1, out_length, stdout);
     } else {
         fwrite(response.data, 1, response.length, stdout);
     }

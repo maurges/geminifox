@@ -1,0 +1,6 @@
+{ "name": "gemini_browser"
+, "description": "Proxy that sends requests via gemini"
+, "path": "/home/morj/projects/geminifox/native/build/gemfox-native"
+, "type": "stdio"
+, "allowed_extensions": ["gemini_browser@amo.morj.men"]
+}

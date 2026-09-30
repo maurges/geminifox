@@ -1,0 +1,30 @@
+{ "manifest_version": 2
+, "name": "gemini_browser"
+, "version": "0.0"
+
+, "description": "Browse the geminispace from firefox"
+, "icons":
+    { "48": "icons/48.png"
+    }
+
+, "background":
+    { "scripts": ["background/main.js"]
+    }
+, "permissions":
+    [ "nativeMessaging"
+    ]
+
+, "protocol_handlers":
+    [ { "protocol": "web+gemini"
+      , "name": "Geminispace from firefox"
+      , "uriTemplate": "ui/proxy.html#!%s"
+      }
+    ]
+
+, "browser_specific_settings":
+    { "gecko":
+        { "id": "gemini_browser@amo.morj.men"
+        , "strict_min_version": "50.0"
+        }
+    }
+}
