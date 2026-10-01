@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <stdint.h>
 
+/// Request to a gemini server
 struct connect_info {
     char * host;
     char * port;
@@ -15,12 +16,14 @@ struct connect_info {
     size_t request_length;
 };
 
+/// Response from a gemini server
 struct response {
     const char * header;
     const char * body;
 };
 
 
+/// Clone a string slice to a newly allocated string, and null-terminates it
 static char * strclone(const char * source, size_t length) {
     char * out = malloc(length + 1);
     memcpy(out, source, length);
@@ -134,10 +137,37 @@ static void free_bytevec(struct bytevec * vec) {
     vec->capacity = 0;
 }
 
-static int connect(struct connect_info * cinfo, struct bytevec * response) {
+
+/// Write the data as expected by firefox stdio framing
+void write_stdio_packet(unsigned char * data, size_t length_ll) {
+    uint32_t length = length_ll; // Be what it may
+    fwrite(&length, sizeof(length), 1, stdout);
+    fwrite(data, 1, length_ll, stdout);
+}
+
+void write_progress(const char * message, size_t length_ll) {
+    const char prefix[] = "{\"progress\":\"";
+    const char suffix[] = "\"}";
+    uint32_t length = sizeof(prefix) - 1 + length_ll + sizeof(suffix) - 1;
+    fwrite(&length, sizeof(length), 1, stdout);
+    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
+    fwrite(message, 1, length_ll, stdout);
+    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
+}
+
+void write_error(const char * message, size_t length_ll) {
+    const char prefix[] = "{\"error\":\"";
+    const char suffix[] = "\"}";
+    uint32_t length = sizeof(prefix) + length_ll + sizeof(suffix);
+    fwrite(&length, sizeof(length), 1, stdout);
+    fwrite(prefix, 1, sizeof(prefix), stdout);
+    fwrite(message, 1, length_ll, stdout);
+    fwrite(suffix, 1, sizeof(suffix), stdout);
+}
+
+static int connect(struct connect_info * cinfo, struct bytevec * response, bool stdio_mode) {
     int ret = 1;
-    int exit_code = MBEDTLS_EXIT_FAILURE;
-    const char * pers = "ssl_client1";
+    const char * pers = "geminifox";
 
     mbedtls_net_context server_fd;
     mbedtls_entropy_context entropy;
@@ -164,13 +194,21 @@ static int connect(struct connect_info * cinfo, struct bytevec * response) {
         strlen(pers)
     );
     if (ret != 0) {
-        fprintf(stderr, " failed\n  ! mbedtls_ctr_drbg_seed returned %d\n", ret);
+        fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
+        if (stdio_mode) {
+            const char errmsg[] = "INTERNAL_INIT";
+            write_error(errmsg, sizeof(errmsg));
+        }
         goto exit;
     }
 
     // Initialize certificates - skipped
 
     // Start the connection
+    if (stdio_mode) {
+        const char msg[] = "ESTABLISH_CONNECTION";
+        write_progress(msg, sizeof(msg) - 1);
+    }
     ret = mbedtls_net_connect(
         &server_fd,
         cinfo->host,
@@ -178,8 +216,17 @@ static int connect(struct connect_info * cinfo, struct bytevec * response) {
         MBEDTLS_NET_PROTO_TCP
     );
     if (ret != 0) {
-        fprintf(stderr, " failed\n  ! mbedtls_net_connect returned %d\n\n", ret);
+        fprintf(stderr, "mbedtls_net_connect failed with %d\n", ret);
+        if (stdio_mode) {
+            const char errmsg[] = "CONNECT_FAILED";
+            write_error(errmsg, sizeof(errmsg));
+        }
         goto exit;
+    }
+
+    if (stdio_mode) {
+        const char msg[] = "ESTABLISH_HANDSHAKE";
+        write_progress(msg, sizeof(msg) - 1);
     }
 
     // Setup tls config
@@ -190,7 +237,11 @@ static int connect(struct connect_info * cinfo, struct bytevec * response) {
         MBEDTLS_SSL_PRESET_DEFAULT
     );
     if (ret != 0) {
-        fprintf(stderr, " failed\n  ! mbedtls_ssl_config_defaults returned %d\n\n", ret);
+        fprintf(stderr, "mbedtls_ssl_config_defaults failed with %d\n", ret);
+        if (stdio_mode) {
+            const char errmsg[] = "INTERNAL_SSL_CONFIG";
+            write_error(errmsg, sizeof(errmsg));
+        }
         goto exit;
     }
 
@@ -202,13 +253,21 @@ static int connect(struct connect_info * cinfo, struct bytevec * response) {
     // Apply the config to to the ssl struct
     ret = mbedtls_ssl_setup(&ssl, &conf);
     if (ret != 0) {
-        fprintf(stderr, " failed\n  ! mbedtls_ssl_setup returned %d\n\n", ret);
+        fprintf(stderr, "mbedtls_ssl_setup failed with %d\n", ret);
+        if (stdio_mode) {
+            const char errmsg[] = "INTERNAL_SSL_SETUP";
+            write_error(errmsg, sizeof(errmsg));
+        }
         goto exit;
     }
     // Set the hostname on ssl
     ret = mbedtls_ssl_set_hostname(&ssl, cinfo->host);
     if (ret != 0) {
-        fprintf(stderr, " failed\n  ! mbedtls_ssl_set_hostname returned %d\n\n", ret);
+        fprintf(stderr, "mbedtls_ssl_set_hostname failed with code %d\n", ret);
+        if (stdio_mode) {
+            const char errmsg[] = "INTERNAL_SSL_HOSTNAME";
+            write_error(errmsg, sizeof(errmsg));
+        }
         goto exit;
     }
     // Apply the ssl to the connection
@@ -217,50 +276,85 @@ static int connect(struct connect_info * cinfo, struct bytevec * response) {
     // Perform the handshake
     while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            fprintf(stderr, 
-                " failed\n  ! mbedtls_ssl_handshake returned -0x%x\n\n",
-                (unsigned int) -ret
+            fprintf(
+                stderr,
+                "mbedtls_ssl_handshake failed with %d\n",
+                ret
             );
+            if (stdio_mode) {
+                const char errmsg[] = "HANDSHAKE_FAILED";
+                write_error(errmsg, sizeof(errmsg));
+            }
         }
     }
 
     // Verify the certificate - skipped
 
     // Write the request
-    while ((ret = mbedtls_ssl_write(&ssl, cinfo->request, cinfo->request_length)) <= 0) {
-        if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
-            fprintf(stderr, " failed\n  ! mbedtls_ssl_write returned %d\n\n", ret);
+    if (stdio_mode) {
+        const char msg[] = "SEND_REQUEST";
+        write_progress(msg, sizeof(msg) - 1);
+    }
+    while (true) {
+        ret = mbedtls_ssl_write(&ssl, cinfo->request, cinfo->request_length);
+        if (ret > 0 && (size_t)ret == cinfo->request_length) {
+            // Write success
+            break;
+        } else if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
+            // These two statuses mean we just retry the write
+            continue;
+        } else {
+            if (ret > 0 && (size_t)ret < cinfo->request_length) {
+                fprintf(
+                    stderr,
+                    "mbedtls_ssl_write failed to write the full buffer: %d < %lu",
+                    ret,
+                    cinfo->request_length
+                );
+            } else {
+                fprintf(stderr, "mbedtls_ssl_write failed with code %d\n", ret);
+            }
+            if (stdio_mode) {
+                const char errmsg[] = "REQUEST_FAILED";
+                write_error(errmsg, sizeof(errmsg));
+            }
             goto exit;
         }
     }
 
     // Read the response from server
     unsigned char buf[4096];
-    do {
+    char status_buf[] = "RESPONSE_PARTIAL 18446744073709551616";
+    while (true) {
         ret = mbedtls_ssl_read(&ssl, buf, sizeof(buf));
 
         if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
-            // So how does this work? We don't update the buffer, do we just overwrite it?
+            // These two statuses mean we just retry the read
             continue;
-        }
-
-        if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
+        } else if (ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
             // Server closed the connection at the end of request, as expected
+            ret = 0;
             break;
-        }
-
-        // ret holds the length read
-        bytevec_append(response, buf, ret);
-
-        if (ret == 0) {
-            // EOF
+        } else if (ret == 0) {
+            // Server closed the connection without a notification, which is
+            // discouraged but permitted
             break;
-        }
-    } while (1);
+        } else if (ret > 0) {
+            // ret holds the length read
+            bytevec_append(response, buf, (size_t)ret);
 
-    mbedtls_ssl_close_notify(&ssl);
-    if (ret == 0 || ret == MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY) {
-        exit_code = MBEDTLS_EXIT_SUCCESS;
+            if (stdio_mode) {
+                size_t s = snprintf(status_buf, sizeof(status_buf), "RESPONSE_PARTIAL %lu", response->length);
+                write_progress(status_buf, s);
+            }
+        } else {
+            fprintf(stderr, "mbedtls_ssl_read failed with code %d\n", ret);
+            if (stdio_mode) {
+                const char errmsg[] = "RESPONSE_FAILED";
+                write_error(errmsg, sizeof(errmsg));
+            }
+            goto exit;
+        }
     }
 
 exit:
@@ -272,12 +366,12 @@ exit:
     mbedtls_ctr_drbg_free(&ctr_drbg);
     mbedtls_entropy_free(&entropy);
 
-    return exit_code;
+    return ret;
 }
 
 int main(int argc, const char ** argv) {
     if (argc > 3) {
-        fprintf(stderr, "Usage: %s [REQ]", argv[0]);
+        fprintf(stderr, "Usage: %s REQ\nOr run with 0 or 2 arguments for stdio mode\n", argv[0]);
         return 1;
     }
 
@@ -292,7 +386,6 @@ int main(int argc, const char ** argv) {
         // The message is preceded by its length in four bytes
         uint32_t length = 0;
         fread(&length, sizeof(length), 1, stdin);
-        fprintf(stderr, "will read %u bytes", length);
         fflush(stderr);
 
         // Maximum gemini url length is 1024
@@ -338,7 +431,7 @@ int main(int argc, const char ** argv) {
     }
 
     struct bytevec response = bytevec_empty();
-    int r = connect(&c, &response);
+    int r = connect(&c, &response, stdio_mode);
     free_connect_info(&c);
 
     if (stdio_mode) {
@@ -358,10 +451,7 @@ int main(int argc, const char ** argv) {
         buf[out_length + 1] = '"';
         out_length += 2;
 
-        // Again the framing
-        uint32_t out_length_ = out_length;
-        fwrite(&out_length_, sizeof(out_length_), 1, stdout);
-        fwrite(buf, 1, out_length, stdout);
+        write_stdio_packet(buf, out_length);
     } else {
         fwrite(response.data, 1, response.length, stdout);
     }
