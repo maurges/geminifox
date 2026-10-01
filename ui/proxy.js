@@ -19,7 +19,7 @@ function parseGemtext(bytes) {
     let i = 0;
 
     function ws() {
-        // Skip whitespace
+        // Skip spaces and tabs
         while (bytes[i] == 32 || bytes[i] == 9) {
             i += 1;
         }
@@ -29,12 +29,31 @@ function parseGemtext(bytes) {
         i = r + 1;
         return r;
     }
+    function textToNl() {
+        const start = i;
+        const end = tonl();
+        return dec.decode(bytes.slice(start, end));
+    }
+
+    let currentList = null;
+    let currentQuote = null;
+    function finishBlocks() {
+        if (currentList !== null) {
+            article.appendChild(currentList);
+            currentList = null;
+        }
+        if (currentQuote !== null) {
+            article.appendChild(currentQuote);
+            currentQuote = null;
+        }
+    }
 
     while (i < bytes.length) {
         // Start of a line
 
         // => - link
         if (bytes[i] == 61 && bytes[i+1] == 62) {
+            finishBlocks();
             i += 2;
             ws();
             const hrefStart = i;
@@ -59,6 +78,7 @@ function parseGemtext(bytes) {
 
         // # - heading
         } else if (bytes[i] === 35) {
+            finishBlocks();
             let hashes = 0;
             while (bytes[i] === 35) {
                 hashes += 1;
@@ -68,15 +88,14 @@ function parseGemtext(bytes) {
             const h = document.createElement("h" + hashes.toString());
 
             ws();
-            const start = i;
-            const end = tonl();
-            const text = dec.decode(bytes.slice(start, end));
+            const text = textToNl();
 
             h.innerText = text;
             article.appendChild(h);
 
         // ``` - preformatted
         } else if (bytes[i] === 96 && bytes[i+1] === 96 && bytes[i+2] === 96) {
+            finishBlocks();
             // The line with quotes is skipped entirely
             tonl();
             const start = i;
@@ -92,8 +111,47 @@ function parseGemtext(bytes) {
             pre.innerText = text;
             article.appendChild(pre);
 
+        // * - list
+        } else if (bytes[i] === 42) {
+            // Finish the quote if exists
+            if (currentQuote !== null) {
+                article.appendChild(currentQuote);
+                currentQuote = null;
+            }
+            // Create the current list if doesn't exist
+            if (currentList === null) {
+                currentList = document.createElement("ul");
+            }
+
+            i += 1; // Skip the asterisk
+            ws();
+            const text = textToNl();
+            const li = document.createElement("li");
+            li.innerText = text;
+            currentList.appendChild(li);
+
+        // > - quote
+        } else if (bytes[i] === 62) {
+            // Finish the list if exists
+            if (currentList !== null) {
+                article.appendChild(currentList);
+                currentList = null;
+            }
+            // Create the current quote if doesn't exist
+            if (currentQuote === null) {
+                currentQuote = document.createElement("blockquote");
+            }
+
+            i += 1; // Skip the arrow
+            ws();
+            const text = textToNl();
+            const p = document.createElement("p");
+            p.innerText = text;
+            currentQuote.appendChild(p);
+
         // None of the above - paragraph of text
         } else {
+            finishBlocks();
             const start = i;
             const end = tonl();
             const text = dec.decode(bytes.slice(start, end));
@@ -102,7 +160,6 @@ function parseGemtext(bytes) {
             p.innerText = text;
             article.appendChild(p);
         }
-        // TODO: lists and quotes
     }
 
     return article;
