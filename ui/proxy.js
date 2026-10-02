@@ -41,16 +41,13 @@ function unwrap(x) {
 /*********************************/
 
 
-// The manifest passes the location after a sha-bang, it's url-encoded
-const loc = decodeURIComponent(window.location.hash.slice(2)).slice(4);
-// Todo: validate the location before passing it to native
-
 /** Adjust a href of a created element to be openable with this extension
  * @param {string} href
+ * @param {string} currentLocation
  * @returns {string}
  */
-function adjustHref(href) {
-    const url = URL.parse(href, loc);
+function adjustHref(href, currentLocation) {
+    const url = URL.parse(href, currentLocation);
     if (url !== null && url.protocol === "gemini:") {
         return "web+" + url.toString();
     } else {
@@ -60,9 +57,10 @@ function adjustHref(href) {
 
 /**
  * @param {Uint8Array} bytes
+ * @param {string} currentLocation - used to replace hrefs to gemini
  * @returns HTMLElement
  */
-function parseGemtext(bytes) {
+function parseGemtext(bytes, currentLocation) {
     const dec = new TextDecoder();
 
     const article = document.createElement("article");
@@ -122,7 +120,7 @@ function parseGemtext(bytes) {
 
             const container = document.createElement("p");
             const a = document.createElement("a");
-            a.href = adjustHref(href);
+            a.href = adjustHref(href, currentLocation);
             a.innerText = text;
             container.appendChild(a);
             article.appendChild(container);
@@ -379,16 +377,15 @@ function parseProgress(o) {
  * @param {object} message
  */
 function displayProgress(message) {
-    console.log("status response", message);
     const progress = parseProgress(message);
-    console.log("rendered", progress, progress.innerText);
     document.body.replaceChildren(progress);
 }
 
 /**
  * @param {string} responseB64
+ * @param {string} currentLocation
  */
-function displayResponse(responseB64) {
+function displayResponse(responseB64, currentLocation) {
     const resp = Uint8Array.fromBase64(responseB64);
 
     // Find the end of the header by "\r\n"
@@ -402,7 +399,7 @@ function displayResponse(responseB64) {
     const headerRepr = displayHeader(header);
     if (headerRepr.contentType !== null) {
         if (headerRepr.contentType.startsWith("text/gemini")) {
-            const article = parseGemtext(body);
+            const article = parseGemtext(body, currentLocation);
             document.body.replaceChildren(article);
         } else {
             document.write("unknown content type: " + headerRepr.contentType);
@@ -413,16 +410,37 @@ function displayResponse(responseB64) {
 }
 
 /**
- * @param {string} loc
+ * @param {string} message
+ */
+function displayError(message) {
+    const div = document.createElement("div");
+    div.innerText = message;
+    document.body.replaceChildren(div);
+}
+
+/**
+ * @param {string} queryPart
  * @returns Promise<void>
  */
-async function run(loc) {
+function navigateTo(queryPart) {
+    if (!queryPart.startsWith("?")) {
+        displayError("Navigate to a gemini:// url to start");
+        return;
+    }
+    const webUrl = decodeURIComponent(queryPart.slice(1));
+    if (!webUrl.startsWith("web+gemini://")) {
+        displayError("Navigate to a gemini:// url to start");
+        return;
+    }
+    const url = webUrl.slice(4);
+
     /**
      * @param {object} resp
      */
     function responseReceived(resp) {
         if (typeof resp === "string") {
-            displayResponse(resp);
+            port.disconnect();
+            displayResponse(resp, url);
         } else {
             displayProgress(resp);
         }
@@ -431,9 +449,19 @@ async function run(loc) {
     const port = browser.runtime.connect();
     port.onMessage.addListener(responseReceived);
 
-    const messageArray = (new TextEncoder()).encode(loc);
+    const messageArray = (new TextEncoder()).encode(url);
     const messageB64 = messageArray.toBase64();
     port.postMessage(messageB64);
 }
 
-run(loc)
+console.log(document.body.lastElementChild);
+console.log(document.body.lastElementChild?.nodeName);
+if (document.body.lastElementChild instanceof HTMLElement && document.body.lastElementChild?.nodeName === "ARTICLE") {
+    // A body with an already rendered page
+    // Don't do anything, as this is a history navigation
+    console.log("reusing cached page");
+} else {
+    // On initial load, navigate to the location
+    // The manifest passes the location as a whole query part, it's url-encoded
+    navigateTo(window.location.search);
+}

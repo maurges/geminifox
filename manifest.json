@@ -17,7 +17,7 @@
 , "protocol_handlers":
     [ { "protocol": "web+gemini"
       , "name": "Geminispace from firefox"
-      , "uriTemplate": "ui/proxy.html#!%s"
+      , "uriTemplate": "ui/proxy.html?%s"
       }
     ]
 
