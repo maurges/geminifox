@@ -77,7 +77,7 @@ function parseGemtext(bytes) {
     }
     function tonl() {
         const r = bytes.indexOf(10, i);
-        i = r + 1;
+        i = r === -1 ? bytes.length : r + 1;
         return r;
     }
     function textToNl() {
@@ -117,9 +117,8 @@ function parseGemtext(bytes) {
             const hrefEnd = i;
             const href = dec.decode(bytes.slice(hrefStart, hrefEnd));
             ws();
-            const textStart = i;
-            const textEnd = tonl();
-            const text = textStart === textEnd ? href : dec.decode(bytes.slice(textStart, textEnd));
+            const mbText = textToNl();
+            const text = mbText.length === 0 ? href : mbText;
 
             const container = document.createElement("p");
             const a = document.createElement("a");
@@ -151,8 +150,8 @@ function parseGemtext(bytes) {
             // The line with quotes is skipped entirely
             tonl();
             const start = i;
-            while (! (bytes[i] === 96 && bytes[i+1] === 96 && bytes[i+2] === 96)) {
-                i = bytes.indexOf(96, i + 1);
+            while (! (bytes[i] === 96 && bytes[i+1] === 96 && bytes[i+2] === 96) && i < bytes.length) {
+                tonl();
             }
             const end = i - 1;
             // The ending line is likewise skipped
@@ -204,15 +203,14 @@ function parseGemtext(bytes) {
         // None of the above - paragraph of text
         } else {
             finishBlocks();
-            const start = i;
-            const end = tonl();
-            const text = dec.decode(bytes.slice(start, end));
-
+            const text = textToNl()
             const p = document.createElement("p");
             p.innerText = text;
             article.appendChild(p);
         }
     }
+
+    finishBlocks();
 
     return article;
 }
