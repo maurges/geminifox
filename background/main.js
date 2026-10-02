@@ -1,64 +1,42 @@
 /// <reference path="../types/webext.d.ts" />
 
-
-/****************************/
-/****** Error handling ******/
-/****************************/
-
+//! Simply resends messages to the native program, since you can't bloody do it
+//from a content script
 
 /**
- * @param {string} s
- * @returns {never}
+ * @param {object} message
+ * @param {(msg: unknown) => void} onMessage
  */
-function panic(s) {
-    throw new Error("Panic: " + s);
-}
-
-/**
- * @template A
- * @param {A | null | undefined} x
- * @param {string} s - error message
- * @returns {A}
- */
-function expect(x, s) {
-    if (x === null || x === undefined) {
-        panic("unwrap: " + s);
-    }
-    return x;
-}
-
-
-/****************************/
-/****** Main extension ******/
-/****************************/
-
-
-function messageToNative(messageB64) {
-    // Todo: I want support for status messages, like connecting to network, dns failure, etc
+function messageToNative(message, onMessage) {
     const natport = browser.runtime.connectNative("gemini_browser");
+
+    let didRespond = false;
     natport.onDisconnect.addListener(p => {
-        console.log("Disconnected with error", p);
+        if (!didRespond) {
+            console.log("Disconnected with error", p);
+            onMessage({"error": "NATIVE_FAILED"})
+        }
     });
     if (natport.error) {
         console.log("Error connecting", natport.error);
+        onMessage({"error": "NATIVE_FAILED"})
     };
-    const r = new Promise((resolve, reject) => {
-        natport.onMessage.addListener(msg => {
-            natport.disconnect();
-            resolve(msg);
-        })
+
+    natport.onMessage.addListener(msg => {
+        didRespond = true;
+        return onMessage(msg);
     });
-    natport.postMessage(messageB64);
-    return r;
+    natport.postMessage(message);
 }
 
+/**
+ * @param {browser.runtime.Port} port
+ */
 function proxyConnected(port) {
-    async function onMessage(messageB64) {
-
-        const resp = await messageToNative(messageB64);
-        port.postMessage(resp);
-    }
-    port.onMessage.addListener(onMessage);
+    port.onMessage.addListener(message => messageToNative(
+        message,
+        msg => port.postMessage(msg),
+    ));
 }
 
 browser.runtime.onConnect.addListener(proxyConnected);

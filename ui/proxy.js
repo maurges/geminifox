@@ -1,16 +1,67 @@
+/// <reference path="../types/webext.d.ts" />
+
+/****************************/
+/****** Error handling ******/
+/****************************/
+
+
+/**
+ * @param {string} s
+ * @returns {never}
+ */
+function panic(s) {
+    throw new Error("Panic: " + s);
+}
+
+/**
+ * @template A
+ * @param {A | null | undefined} x
+ * @param {string} s - error message
+ * @returns {A}
+ */
+function expect(x, s) {
+    if (x === null || x === undefined) {
+        panic("unwrap: " + s);
+    }
+    return x;
+}
+
+/**
+ * @template A
+ * @param {A | null | undefined} x
+ * @returns {A}
+ */
+function unwrap(x) {
+    return expect(x, "unexpected value");
+}
+
+
+/*********************************/
+/****** Main functionality ******/
+/*********************************/
+
+
 // The manifest passes the location after a sha-bang, it's url-encoded
 const loc = decodeURIComponent(window.location.hash.slice(2)).slice(4);
 // Todo: validate the location before passing it to native
 
+/** Adjust a href of a created element to be openable with this extension
+ * @param {string} href
+ * @returns {string}
+ */
 function adjustHref(href) {
     const url = URL.parse(href, loc);
-    if (url.protocol === "gemini:") {
+    if (url !== null && url.protocol === "gemini:") {
         return "web+" + url.toString();
     } else {
-        return url;
+        return href;
     }
 }
 
+/**
+ * @param {Uint8Array} bytes
+ * @returns HTMLElement
+ */
 function parseGemtext(bytes) {
     const dec = new TextDecoder();
 
@@ -35,7 +86,9 @@ function parseGemtext(bytes) {
         return dec.decode(bytes.slice(start, end));
     }
 
+    /** @type {null | HTMLElement} */
     let currentList = null;
+    /** @type {null | HTMLElement} */
     let currentQuote = null;
     function finishBlocks() {
         if (currentList !== null) {
@@ -67,7 +120,6 @@ function parseGemtext(bytes) {
             const textStart = i;
             const textEnd = tonl();
             const text = textStart === textEnd ? href : dec.decode(bytes.slice(textStart, textEnd));
-            console.log("processing a link", href, textStart, textEnd);
 
             const container = document.createElement("p");
             const a = document.createElement("a");
@@ -165,14 +217,18 @@ function parseGemtext(bytes) {
     return article;
 }
 
-function displayCode(b1, b2) {
-    return String.fromCharCode(b1) + String.fromCharCode(b2);
-}
-
+/**
+ * @param {Uint8Array} bytes
+ * @returns {{text: string, contentType: string | null}}
+ */
 function displayHeader(bytes) {
     const dec = new TextDecoder();
 
-    let code = displayCode(bytes[0], bytes[1]);
+    if (bytes.length < 3) {
+        return {text: "<p> Invalid response </p>", contentType: null}
+    }
+
+    let code = String.fromCharCode(unwrap(bytes[0])) + String.fromCharCode(unwrap(bytes[1]));
 
     // 1X - Input required
     if (bytes[0] === 49) {
@@ -216,8 +272,6 @@ function displayHeader(bytes) {
             text: text + `<a href="web+${target}"> ${target} </a>`,
             contentType: null,
         };
-
-        return false;
 
     // 4X - Temporary failure
     } else if (bytes[0] === 52) {
@@ -264,11 +318,25 @@ function displayHeader(bytes) {
         text += "<p>" + message + "</p>";
 
         return {text, contentType: null};
+    } else {
+        return {text: "<p> Invalid response </p>", contentType: null}
     }
 }
 
+/**
+ * @param {string} loc
+ * @returns Promise<void>
+ */
 async function run(loc) {
+    /**
+     * @param {object} responseB64
+     */
     function responseReceived(responseB64) {
+        if (!(typeof responseB64 === "string")) {
+            console.log("status response", responseB64);
+            return;
+        }
+
         const resp = Uint8Array.fromBase64(responseB64);
 
         // Find the end of the header by "\r\n"
