@@ -1,12 +1,19 @@
-#include "mbedtls/platform.h"
-#include "mbedtls/net_sockets.h"
-#include "mbedtls/ssl.h"
-#include "mbedtls/entropy.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/base64.h"
+#define _POSIX_C_SOURCE 200112L
+
+#include <netdb.h>
+#include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <stdint.h>
+
+#include <sys/socket.h>
+#include <sys/types.h>
+
+#include "mbedtls/base64.h"
+#include "mbedtls/ctr_drbg.h"
+#include "mbedtls/entropy.h"
+#include "mbedtls/net_sockets.h"
+#include "mbedtls/ssl.h"
 
 /// Request to a gemini server
 struct connect_info {
@@ -145,31 +152,34 @@ void write_stdio_packet(unsigned char * data, size_t length_ll) {
     fwrite(data, 1, length_ll, stdout);
 }
 
+/// length_ll includes the null terminator for convenience
 void write_progress(const char * message, size_t length_ll) {
     const char prefix[] = "{\"progress\":\"";
     const char suffix[] = "\"}";
-    uint32_t length = sizeof(prefix) - 1 + length_ll + sizeof(suffix) - 1;
+    uint32_t length = sizeof(prefix) - 1 + length_ll - 1+ sizeof(suffix) - 1;
     fwrite(&length, sizeof(length), 1, stdout);
     fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
-    fwrite(message, 1, length_ll, stdout);
+    fwrite(message, 1, length_ll - 1, stdout);
     fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
+    fflush(stdout);
 }
 
+/// length_ll includes the null terminator for convenience
 void write_error(const char * message, size_t length_ll) {
     const char prefix[] = "{\"error\":\"";
     const char suffix[] = "\"}";
-    uint32_t length = sizeof(prefix) + length_ll + sizeof(suffix);
+    uint32_t length = sizeof(prefix) - 1 + length_ll - 1 + sizeof(suffix) - 1;
     fwrite(&length, sizeof(length), 1, stdout);
-    fwrite(prefix, 1, sizeof(prefix), stdout);
-    fwrite(message, 1, length_ll, stdout);
-    fwrite(suffix, 1, sizeof(suffix), stdout);
+    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
+    fwrite(message, 1, length_ll - 1, stdout);
+    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
+    fflush(stdout);
 }
 
-static int connect(struct connect_info * cinfo, struct bytevec * response, bool stdio_mode) {
+static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, bool stdio_mode) {
     int ret = 1;
     const char * pers = "geminifox";
 
-    mbedtls_net_context server_fd;
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_ssl_context ssl;
@@ -177,13 +187,14 @@ static int connect(struct connect_info * cinfo, struct bytevec * response, bool 
     mbedtls_x509_crt cacert;
 
     // Initialize all session data
-    mbedtls_net_init(&server_fd);
     mbedtls_ssl_init(&ssl);
     mbedtls_ssl_config_init(&conf);
     mbedtls_x509_crt_init(&cacert);
     mbedtls_ctr_drbg_init(&ctr_drbg);
     mbedtls_entropy_init(&entropy);
-    // psa_crypto_init?
+
+    int sock = -1;
+    struct addrinfo * addresses = NULL;
 
     // Seed the rng
     ret = mbedtls_ctr_drbg_seed(
@@ -204,19 +215,75 @@ static int connect(struct connect_info * cinfo, struct bytevec * response, bool 
 
     // Initialize certificates - skipped
 
-    // Start the connection
+    // Lookup the domain
+    if (stdio_mode) {
+        const char msg[] = "LOOKUP_DOMAIN";
+        write_progress(msg, sizeof(msg));
+    }
+    struct addrinfo lookup_params = { 0 };
+    lookup_params.ai_family = AF_UNSPEC; // both ipv6 and ipv4
+    lookup_params.ai_socktype = SOCK_STREAM; // tcp
+    ret = getaddrinfo(cinfo->host, cinfo->port ? cinfo->port : "1965", &lookup_params, &addresses);
+    if (ret == EAI_SYSTEM) {
+        fprintf(stderr, "system error in domain lookup\n");
+        if (stdio_mode) {
+            const char errmsg[] = "NETWORK_FAILED";
+            write_error(errmsg, sizeof(errmsg));
+        }
+        goto exit;
+    } else if (ret != 0) {
+        fprintf(stderr, "getaddrinfo failed with %d\n", ret);
+        if (stdio_mode) {
+            const char errmsg[] = "LOOKUP_FAILED";
+            write_error(errmsg, sizeof(errmsg));
+        }
+        goto exit;
+    }
+
+    // Try to connect to all returned addrs in sequence
     if (stdio_mode) {
         const char msg[] = "ESTABLISH_CONNECTION";
-        write_progress(msg, sizeof(msg) - 1);
+        write_progress(msg, sizeof(msg));
     }
-    ret = mbedtls_net_connect(
-        &server_fd,
-        cinfo->host,
-        cinfo->port ? cinfo->port : "1965",
-        MBEDTLS_NET_PROTO_TCP
-    );
-    if (ret != 0) {
-        fprintf(stderr, "mbedtls_net_connect failed with %d\n", ret);
+    // Starting with ipv6 only
+    size_t address_candidates = 0;
+    for (struct addrinfo * addr = addresses; addr != NULL; addr = addr->ai_next) {
+        address_candidates += 1;
+        if (addr->ai_family == AF_INET) {
+            continue;
+        }
+        sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+        if (sock == -1) {
+            continue;
+        }
+        ret = connect(sock, addr->ai_addr, addr->ai_addrlen);
+        if (ret != -1) {
+            break;
+        }
+        close(sock);
+        sock = -1;
+    }
+    // If that failed, try ipv4
+    if (sock == -1) {
+        for (struct addrinfo * addr = addresses; addr != NULL; addr = addr->ai_next) {
+            if (addr->ai_family != AF_INET) {
+                continue;
+            }
+            sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+            if (sock == -1) {
+                continue;
+            }
+            ret = connect(sock, addr->ai_addr, addr->ai_addrlen);
+            if (ret != -1) {
+                break;
+            }
+            close(sock);
+            sock = -1;
+        }
+    }
+    // If that failed too, abort
+    if (sock == -1) {
+        fprintf(stderr, "failed to connect to any of %lu addresses\n", address_candidates);
         if (stdio_mode) {
             const char errmsg[] = "CONNECT_FAILED";
             write_error(errmsg, sizeof(errmsg));
@@ -224,9 +291,12 @@ static int connect(struct connect_info * cinfo, struct bytevec * response, bool 
         goto exit;
     }
 
+
+    mbedtls_net_context server_fd = { .fd = sock };
+
     if (stdio_mode) {
         const char msg[] = "ESTABLISH_HANDSHAKE";
-        write_progress(msg, sizeof(msg) - 1);
+        write_progress(msg, sizeof(msg));
     }
 
     // Setup tls config
@@ -245,10 +315,11 @@ static int connect(struct connect_info * cinfo, struct bytevec * response, bool 
         goto exit;
     }
 
+    // Setup rng for this config
+    mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
     // Disable ssl verification, as gemini certs are self-signed
     mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
     mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
-    mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg); // wtf is this?
 
     // Apply the config to to the ssl struct
     ret = mbedtls_ssl_setup(&ssl, &conf);
@@ -293,7 +364,7 @@ static int connect(struct connect_info * cinfo, struct bytevec * response, bool 
     // Write the request
     if (stdio_mode) {
         const char msg[] = "SEND_REQUEST";
-        write_progress(msg, sizeof(msg) - 1);
+        write_progress(msg, sizeof(msg));
     }
     while (true) {
         ret = mbedtls_ssl_write(&ssl, cinfo->request, cinfo->request_length);
@@ -345,7 +416,7 @@ static int connect(struct connect_info * cinfo, struct bytevec * response, bool 
 
             if (stdio_mode) {
                 size_t s = snprintf(status_buf, sizeof(status_buf), "RESPONSE_PARTIAL %lu", response->length);
-                write_progress(status_buf, s);
+                write_progress(status_buf, s + 1);
             }
         } else {
             fprintf(stderr, "mbedtls_ssl_read failed with code %d\n", ret);
@@ -359,7 +430,12 @@ static int connect(struct connect_info * cinfo, struct bytevec * response, bool 
 
 exit:
     // Clean up allocated things and return the exit code
-    mbedtls_net_free(&server_fd);
+    if (addresses) {
+        freeaddrinfo(addresses);
+    }
+    if (sock != -1) {
+        close(sock);
+    }
     mbedtls_x509_crt_free(&cacert);
     mbedtls_ssl_free(&ssl);
     mbedtls_ssl_config_free(&conf);
@@ -431,7 +507,7 @@ int main(int argc, const char ** argv) {
     }
 
     struct bytevec response = bytevec_empty();
-    int r = connect(&c, &response, stdio_mode);
+    int r = fetch_gemini(&c, &response, stdio_mode);
     free_connect_info(&c);
 
     if (stdio_mode) {
