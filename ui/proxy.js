@@ -440,6 +440,8 @@ function navigateTo(queryPart) {
     function responseReceived(resp) {
         if (typeof resp === "string") {
             port.disconnect();
+            // Remember the fetched result
+            history.replaceState({gemfox: {resp, url}}, "");
             displayResponse(resp, url);
         } else {
             displayProgress(resp);
@@ -454,12 +456,20 @@ function navigateTo(queryPart) {
     port.postMessage(messageB64);
 }
 
-console.log(document.body.lastElementChild);
-console.log(document.body.lastElementChild?.nodeName);
-if (document.body.lastElementChild instanceof HTMLElement && document.body.lastElementChild?.nodeName === "ARTICLE") {
-    // A body with an already rendered page
-    // Don't do anything, as this is a history navigation
-    console.log("reusing cached page");
+// Check if this page is in the history
+if (history.state !== null && "gemfox" in history.state) {
+    const oldState = history.state.gemfox;
+    if (
+        "resp" in oldState
+        && typeof oldState.resp === "string"
+        && "url" in oldState
+        && typeof oldState.url === "string"
+    ) {
+        displayResponse(oldState.resp, oldState.url);
+    } else{
+        console.error("invalid history item", oldState);
+        navigateTo(window.location.search);
+    }
 } else {
     // On initial load, navigate to the location
     // The manifest passes the location as a whole query part, it's url-encoded
