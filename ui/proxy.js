@@ -324,39 +324,109 @@ function displayHeader(bytes) {
 }
 
 /**
+ * @param {object} o
+ * @returns {HTMLElement}
+ */
+function parseProgress(o) {
+    const unexpected_message = "Fatal error: unexpected message from the native program";
+    if (typeof o !== "object") {
+        // Malformed message
+        const div = document.createElement("div");
+        div.innerText = unexpected_message;
+        return div;
+    }
+
+    if ("error" in o && typeof o.error === "string") {
+        /** @type {Record<string, string>}*/
+        const errors = {
+            "INTERNAL_INIT": "Internal error: initialization failed",
+            "INTERNAL_SSL_CONFIG": "Internal error: SSL configuration failed",
+            "INTERNAL_SSL_SETUP": "Internal error: SSL setup failed",
+            "INTERNAL_SSL_HOSTNAME": "Internal error: SSL hostname binding failed",
+
+            "NETWORK_FAILED": "Network unreachable",
+            "LOOKUP_FAILED": "DNS record for the server returned empty",
+            "CONNECT_FAILED": "Failed to connect to the server",
+            "HANDSHAKE_FAILED": "TLS negotiation with the server failed",
+            "REQUEST_FAILED": "Server didn't accept the request",
+            "RESPONSE_FAILED": "Server didn't provide the response",
+        };
+        const div = document.createElement("div");
+        div.innerText = errors[o.error] || unexpected_message;
+        return div;
+    } else if ("progress" in o && typeof o.progress === "string") {
+        /** @type {Record<string, string>}*/
+        const statuses = {
+            "LOOKUP_DOMAIN": "Looking up DNS records...",
+            "ESTABLISH_CONNECTION": "Connecting to the server...",
+            "ESTABLISH_HANDSHAKE": "Establishing TLS with the server...",
+            "SEND_REQUEST": "Sending the request...",
+        };
+        const div = document.createElement("div");
+        if (o.progress.startsWith("RESPONSE_PARTIAL ")) {
+            div.innerText = "Downloaded " + o.progress.slice(17) + " bytes...";
+        } else {
+            div.innerText = statuses[o.progress] || unexpected_message;
+        }
+        return div;
+    } else {
+        // Malformed message
+        const div = document.createElement("div");
+        div.innerText = unexpected_message;
+        return div;
+    }
+}
+
+/**
+ * @param {object} message
+ */
+function displayProgress(message) {
+    console.log("status response", message);
+    const progress = parseProgress(message);
+    console.log("rendered", progress, progress.innerText);
+    document.body.replaceChildren(progress);
+}
+
+/**
+ * @param {string} responseB64
+ */
+function displayResponse(responseB64) {
+    const resp = Uint8Array.fromBase64(responseB64);
+
+    // Find the end of the header by "\r\n"
+    let i = 0;
+    while (resp[i] != 13 && resp[i+1] != 10) {
+        i += 1;
+    }
+    const header = resp.slice(0, i);
+    const body = resp.slice(i+2);
+
+    const headerRepr = displayHeader(header);
+    if (headerRepr.contentType !== null) {
+        if (headerRepr.contentType.startsWith("text/gemini")) {
+            const article = parseGemtext(body);
+            document.body.replaceChildren(article);
+        } else {
+            document.write("unknown content type: " + headerRepr.contentType);
+        }
+    } else {
+        document.write(headerRepr.text);
+    }
+}
+
+/**
  * @param {string} loc
  * @returns Promise<void>
  */
 async function run(loc) {
     /**
-     * @param {object} responseB64
+     * @param {object} resp
      */
-    function responseReceived(responseB64) {
-        if (!(typeof responseB64 === "string")) {
-            console.log("status response", responseB64);
-            return;
-        }
-
-        const resp = Uint8Array.fromBase64(responseB64);
-
-        // Find the end of the header by "\r\n"
-        let i = 0;
-        while (resp[i] != 13 && resp[i+1] != 10) {
-            i += 1;
-        }
-        const header = resp.slice(0, i);
-        const body = resp.slice(i+2);
-
-        const headerRepr = displayHeader(header);
-        if (headerRepr.contentType !== null) {
-            if (headerRepr.contentType.startsWith("text/gemini")) {
-                const article = parseGemtext(body);
-                document.body.appendChild(article);
-            } else {
-                document.write("unknown content type: " + headerRepr.contentType);
-            }
+    function responseReceived(resp) {
+        if (typeof resp === "string") {
+            displayResponse(resp);
         } else {
-            document.write(headerRepr.text);
+            displayProgress(resp);
         }
     }
 

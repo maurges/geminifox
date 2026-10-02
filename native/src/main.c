@@ -35,6 +35,30 @@
 #define SEND_REQUEST "SEND_REQUEST"
 #define RESPONSE_PARTIAL "RESPONSE_PARTIAL"
 
+/// length_ll includes the null terminator for convenience
+void write_progress(const char * message, size_t length_ll) {
+    const char prefix[] = "{\"progress\":\"";
+    const char suffix[] = "\"}";
+    uint32_t length = sizeof(prefix) - 1 + length_ll - 1+ sizeof(suffix) - 1;
+    fwrite(&length, sizeof(length), 1, stdout);
+    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
+    fwrite(message, 1, length_ll - 1, stdout);
+    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
+    fflush(stdout);
+}
+
+/// length_ll includes the null terminator for convenience
+void write_error(const char * message, size_t length_ll) {
+    const char prefix[] = "{\"error\":\"";
+    const char suffix[] = "\"}";
+    uint32_t length = sizeof(prefix) - 1 + length_ll - 1 + sizeof(suffix) - 1;
+    fwrite(&length, sizeof(length), 1, stdout);
+    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
+    fwrite(message, 1, length_ll - 1, stdout);
+    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
+    fflush(stdout);
+}
+
 
 /// Request to a gemini server
 struct connect_info {
@@ -171,30 +195,6 @@ void write_stdio_packet(unsigned char * data, size_t length_ll) {
     uint32_t length = length_ll; // Be what it may
     fwrite(&length, sizeof(length), 1, stdout);
     fwrite(data, 1, length_ll, stdout);
-}
-
-/// length_ll includes the null terminator for convenience
-void write_progress(const char * message, size_t length_ll) {
-    const char prefix[] = "{\"progress\":\"";
-    const char suffix[] = "\"}";
-    uint32_t length = sizeof(prefix) - 1 + length_ll - 1+ sizeof(suffix) - 1;
-    fwrite(&length, sizeof(length), 1, stdout);
-    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
-    fwrite(message, 1, length_ll - 1, stdout);
-    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
-    fflush(stdout);
-}
-
-/// length_ll includes the null terminator for convenience
-void write_error(const char * message, size_t length_ll) {
-    const char prefix[] = "{\"error\":\"";
-    const char suffix[] = "\"}";
-    uint32_t length = sizeof(prefix) - 1 + length_ll - 1 + sizeof(suffix) - 1;
-    fwrite(&length, sizeof(length), 1, stdout);
-    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
-    fwrite(message, 1, length_ll - 1, stdout);
-    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
-    fflush(stdout);
 }
 
 static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, bool stdio_mode) {
