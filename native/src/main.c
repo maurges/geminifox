@@ -15,6 +15,27 @@
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
 
+
+///// Error and progress values /////
+#define INTERNAL_INIT "INTERNAL_INIT"
+#define INTERNAL_SSL_CONFIG "INTERNAL_SSL_CONFIG"
+#define INTERNAL_SSL_SETUP "INTERNAL_SSL_SETUP"
+#define INTERNAL_SSL_HOSTNAME "INTERNAL_SSL_HOSTNAME"
+
+#define NETWORK_FAILED "NETWORK_FAILED"
+#define LOOKUP_FAILED "LOOKUP_FAILED"
+#define CONNECT_FAILED "CONNECT_FAILED"
+#define HANDSHAKE_FAILED "HANDSHAKE_FAILED"
+#define REQUEST_FAILED "REQUEST_FAILED"
+#define RESPONSE_FAILED "RESPONSE_FAILED"
+
+#define LOOKUP_DOMAIN "LOOKUP_DOMAIN"
+#define ESTABLISH_CONNECTION "ESTABLISH_CONNECTION"
+#define ESTABLISH_HANDSHAKE "ESTABLISH_HANDSHAKE"
+#define SEND_REQUEST "SEND_REQUEST"
+#define RESPONSE_PARTIAL "RESPONSE_PARTIAL"
+
+
 /// Request to a gemini server
 struct connect_info {
     char * host;
@@ -207,8 +228,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
         if (stdio_mode) {
-            const char errmsg[] = "INTERNAL_INIT";
-            write_error(errmsg, sizeof(errmsg));
+            write_error(INTERNAL_INIT, sizeof(INTERNAL_INIT));
         }
         goto exit;
     }
@@ -217,8 +237,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
 
     // Lookup the domain
     if (stdio_mode) {
-        const char msg[] = "LOOKUP_DOMAIN";
-        write_progress(msg, sizeof(msg));
+        write_progress(LOOKUP_DOMAIN, sizeof(LOOKUP_DOMAIN));
     }
     struct addrinfo lookup_params = { 0 };
     lookup_params.ai_family = AF_UNSPEC; // both ipv6 and ipv4
@@ -227,23 +246,20 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     if (ret == EAI_SYSTEM) {
         fprintf(stderr, "system error in domain lookup\n");
         if (stdio_mode) {
-            const char errmsg[] = "NETWORK_FAILED";
-            write_error(errmsg, sizeof(errmsg));
+            write_error(NETWORK_FAILED, sizeof(NETWORK_FAILED));
         }
         goto exit;
     } else if (ret != 0) {
         fprintf(stderr, "getaddrinfo failed with %d\n", ret);
         if (stdio_mode) {
-            const char errmsg[] = "LOOKUP_FAILED";
-            write_error(errmsg, sizeof(errmsg));
+            write_error(LOOKUP_FAILED, sizeof(LOOKUP_FAILED));
         }
         goto exit;
     }
 
     // Try to connect to all returned addrs in sequence
     if (stdio_mode) {
-        const char msg[] = "ESTABLISH_CONNECTION";
-        write_progress(msg, sizeof(msg));
+        write_progress(ESTABLISH_CONNECTION, sizeof(ESTABLISH_CONNECTION));
     }
     // Starting with ipv6 only
     size_t address_candidates = 0;
@@ -285,8 +301,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     if (sock == -1) {
         fprintf(stderr, "failed to connect to any of %lu addresses\n", address_candidates);
         if (stdio_mode) {
-            const char errmsg[] = "CONNECT_FAILED";
-            write_error(errmsg, sizeof(errmsg));
+            write_error(CONNECT_FAILED, sizeof(CONNECT_FAILED));
         }
         goto exit;
     }
@@ -295,8 +310,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     mbedtls_net_context server_fd = { .fd = sock };
 
     if (stdio_mode) {
-        const char msg[] = "ESTABLISH_HANDSHAKE";
-        write_progress(msg, sizeof(msg));
+        write_progress(ESTABLISH_HANDSHAKE, sizeof(ESTABLISH_HANDSHAKE));
     }
 
     // Setup tls config
@@ -309,8 +323,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_config_defaults failed with %d\n", ret);
         if (stdio_mode) {
-            const char errmsg[] = "INTERNAL_SSL_CONFIG";
-            write_error(errmsg, sizeof(errmsg));
+            write_error(INTERNAL_SSL_CONFIG, sizeof(INTERNAL_SSL_CONFIG));
         }
         goto exit;
     }
@@ -326,8 +339,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_setup failed with %d\n", ret);
         if (stdio_mode) {
-            const char errmsg[] = "INTERNAL_SSL_SETUP";
-            write_error(errmsg, sizeof(errmsg));
+            write_error(INTERNAL_SSL_SETUP, sizeof(INTERNAL_SSL_SETUP));
         }
         goto exit;
     }
@@ -336,8 +348,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_set_hostname failed with code %d\n", ret);
         if (stdio_mode) {
-            const char errmsg[] = "INTERNAL_SSL_HOSTNAME";
-            write_error(errmsg, sizeof(errmsg));
+            write_error(INTERNAL_SSL_HOSTNAME, sizeof(INTERNAL_SSL_HOSTNAME));
         }
         goto exit;
     }
@@ -353,8 +364,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
                 ret
             );
             if (stdio_mode) {
-                const char errmsg[] = "HANDSHAKE_FAILED";
-                write_error(errmsg, sizeof(errmsg));
+                write_error(HANDSHAKE_FAILED, sizeof(HANDSHAKE_FAILED));
             }
         }
     }
@@ -363,8 +373,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
 
     // Write the request
     if (stdio_mode) {
-        const char msg[] = "SEND_REQUEST";
-        write_progress(msg, sizeof(msg));
+        write_progress(SEND_REQUEST, sizeof(SEND_REQUEST));
     }
     while (true) {
         ret = mbedtls_ssl_write(&ssl, cinfo->request, cinfo->request_length);
@@ -386,8 +395,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
                 fprintf(stderr, "mbedtls_ssl_write failed with code %d\n", ret);
             }
             if (stdio_mode) {
-                const char errmsg[] = "REQUEST_FAILED";
-                write_error(errmsg, sizeof(errmsg));
+                write_error(REQUEST_FAILED, sizeof(REQUEST_FAILED));
             }
             goto exit;
         }
@@ -395,7 +403,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
 
     // Read the response from server
     unsigned char buf[4096];
-    char status_buf[] = "RESPONSE_PARTIAL 18446744073709551616";
+    char status_buf[] = RESPONSE_PARTIAL " 18446744073709551616";
     while (true) {
         ret = mbedtls_ssl_read(&ssl, buf, sizeof(buf));
 
@@ -415,14 +423,13 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
             bytevec_append(response, buf, (size_t)ret);
 
             if (stdio_mode) {
-                size_t s = snprintf(status_buf, sizeof(status_buf), "RESPONSE_PARTIAL %lu", response->length);
+                size_t s = snprintf(status_buf, sizeof(status_buf), RESPONSE_PARTIAL " %lu", response->length);
                 write_progress(status_buf, s + 1);
             }
         } else {
             fprintf(stderr, "mbedtls_ssl_read failed with code %d\n", ret);
             if (stdio_mode) {
-                const char errmsg[] = "RESPONSE_FAILED";
-                write_error(errmsg, sizeof(errmsg));
+                write_error(RESPONSE_FAILED, sizeof(RESPONSE_FAILED));
             }
             goto exit;
         }
