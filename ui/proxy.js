@@ -314,13 +314,10 @@ function displayResponse(responseB64, currentLocation) {
     if (headerRepr === null) {
         const div = document.createElement("div");
         div.innerText = "Malformed server reply";
-        console.log(header);
         document.body.replaceChildren(div);
         return
     };
     const {code, text} = headerRepr;
-
-    console.log("response", code, text);
 
     // 1X - Input required
     if (code >= 10 && code <= 19) {
@@ -337,6 +334,10 @@ function displayResponse(responseB64, currentLocation) {
     } else if (code >= 20 && code <= 29) {
         if (text.startsWith("text/gemini")) {
             const article = parseGemtext(body, currentLocation);
+            document.body.replaceChildren(article);
+        } else if (text.startsWith("text/plain")) {
+            const article = document.createElement("pre");
+            article.innerText = (new TextDecoder()).decode(body);
             document.body.replaceChildren(article);
         } else {
             const div = document.createElement("div");
@@ -436,11 +437,11 @@ function navigateTo(queryPart) {
     port.postMessage(messageB64);
 }
 
-// Check if this page is in the history
+// Check if we've been on this page before
+/** @ts-ignore */
 const wasReload = performance.getEntriesByType("navigation")[0]?.type === "reload";
 if (wasReload) {
-    console.log("clear history on refresh");
-    history.replaceState(null);
+    history.replaceState(null, "");
     navigateTo(window.location.search);
 } else if (history.state !== null && "gemfox" in history.state) {
     const oldState = history.state.gemfox;
@@ -450,7 +451,6 @@ if (wasReload) {
         && "url" in oldState
         && typeof oldState.url === "string"
     ) {
-        console.log("restored from history");
         displayResponse(oldState.resp, oldState.url);
     } else{
         console.error("invalid history item", oldState);
