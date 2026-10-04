@@ -190,11 +190,33 @@ static void free_bytevec(struct bytevec * vec) {
 }
 
 
-/// Write the data as expected by firefox stdio framing
-void write_stdio_packet(unsigned char * data, size_t length_ll) {
-    uint32_t length = length_ll; // Be what it may
-    fwrite(&length, sizeof(length), 1, stdout);
-    fwrite(data, 1, length_ll, stdout);
+/// Encode with json framing quotes around the result
+struct bytevec base64_encode(struct bytevec * data) {
+    size_t out_length = 0;
+
+    int r = mbedtls_base64_encode(NULL, 0, &out_length, data->data, data->length);
+    if (r != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+        fprintf(stderr, "base64 encode failed with %d\n", r);
+        return bytevec_empty();
+    }
+    struct bytevec encoded = {
+        .data = malloc(out_length + 2),
+        .length = out_length + 2,
+        .capacity = out_length + 2,
+    };
+    r = mbedtls_base64_encode(encoded.data + 1, out_length, &out_length, data->data, data->length);
+
+    if (r != 0) {
+        fprintf(stderr, "base64 encode failed with %d\n", r);
+        free_bytevec(&encoded);
+    }
+    // Some fucking times the encoded length is less than queried, so update it
+    encoded.length = out_length + 2;
+    // add json string quotes
+    encoded.data[0] = '"';
+    encoded.data[out_length + 1] = '"';
+
+    return encoded;
 }
 
 static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, bool stdio_mode) {
@@ -303,6 +325,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
         if (stdio_mode) {
             write_error(CONNECT_FAILED, sizeof(CONNECT_FAILED));
         }
+        ret = -1;
         goto exit;
     }
 
@@ -517,29 +540,20 @@ int main(int argc, const char ** argv) {
     int r = fetch_gemini(&c, &response, stdio_mode);
     free_connect_info(&c);
 
-    if (stdio_mode) {
-        // print the result as base64 json, for stdio mode
-        size_t out_length = 0;
-        int r = mbedtls_base64_encode(NULL, 0, &out_length, response.data, response.length);
-        if (r != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL && r != 0) {
-            fprintf(stderr, "base64 encode failed\n");
+    if (r == 0) {
+        if (stdio_mode) {
+            struct bytevec encoded = base64_encode(&response);
+            if (encoded.data != NULL) {
+                // Write data as expected by firefox stdio framing
+                uint32_t length = encoded.length; // Be what it may
+                fwrite(&length, sizeof(length), 1, stdout);
+                fwrite(encoded.data, 1, encoded.length, stdout);
+            }
+        } else {
+            fwrite(response.data, 1, response.length, stdout);
         }
-        unsigned char * buf = malloc(out_length + 2);
-        r = mbedtls_base64_encode(buf + 1, out_length, &out_length, response.data, response.length);
-        if (r != 0) {
-            fprintf(stderr, "base64 encode failed\n");
-        }
-        // add json string quotes
-        buf[0] = '"';
-        buf[out_length + 1] = '"';
-        out_length += 2;
-
-        write_stdio_packet(buf, out_length);
-    } else {
-        fwrite(response.data, 1, response.length, stdout);
+        fflush(stdout);
     }
-    fflush(stdout);
-
     free_bytevec(&response);
 
     return r;
