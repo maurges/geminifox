@@ -31,8 +31,8 @@ function expect(x, s) {
  * @param {A | null | undefined} x
  * @returns {A}
  */
-function unwrap(x) {
-    return expect(x, "unexpected value");
+function unwrapUnchecked(x) {
+    return /** @type A */ (x);
 }
 
 
@@ -109,7 +109,7 @@ function parseGemtext(bytes, currentLocation) {
             ws();
             const hrefStart = i;
             // Url is delimited by whitespace
-            while (bytes[i] != 32 && bytes[i] != 9 && bytes[i] != 10) {
+            while (bytes[i] != 32 && bytes[i] != 9 && bytes[i] != 10 && i < bytes.length) {
                 i += 1;
             }
             const hrefEnd = i;
@@ -215,108 +215,22 @@ function parseGemtext(bytes, currentLocation) {
 
 /**
  * @param {Uint8Array} bytes
- * @returns {{text: string, contentType: string | null}}
+ * @returns {{code: number, text: string} | null}
  */
-function displayHeader(bytes) {
-    const dec = new TextDecoder();
-
+function parseHeader(bytes) {
     if (bytes.length < 3) {
-        return {text: "<p> Invalid response </p>", contentType: null}
+        return null;
+    }
+    const code10 = unwrapUnchecked(bytes[0]);
+    const code1 = unwrapUnchecked(bytes[1]);
+    if (code10 <= 48 || code10 > 57 || code1 < 48 || code1 > 57) {
+        return null;
     }
 
-    let code = String.fromCharCode(unwrap(bytes[0])) + String.fromCharCode(unwrap(bytes[1]));
-
-    // 1X - Input required
-    if (bytes[0] === 49) {
-        let text;
-        // 11 - Sensitive input
-        if (bytes[1] === 49) {
-            text = `<p>${code} Sensitive Input Required</p>`;
-        } else {
-            text = `<p>${code} Input Required</p>`;
-        }
-        const question = dec.decode(bytes.slice(3));
-
-        return {
-            text: text + "<p>" + question + "</p>",
-            contentType: null,
-        };
-
-    // 2X - Success
-    } else if (bytes[0] == 50) {
-        const contentType = dec.decode(bytes.slice(3));
-        return {
-            text: `<p>${code} Success</p>`,
-            contentType,
-        };
-
-    // 3X - Redirect
-    } else if (bytes[0] == 51) {
-        let text;
-        // 30 - Temporary
-        if (bytes[1] == 48) {
-            text = `<p>${code} Temporary Redirect</p>`;
-        // 31 - Permanent
-        } else if (bytes[1] === 49) {
-            text = `<p>${code} Permanent Redirect</p>`;
-        } else {
-            text = `<p>${code} Redirect</p>`;
-        }
-
-        const target = dec.decode(bytes.slice(3));
-        return {
-            text: text + `<a href="web+${target}"> ${target} </a>`,
-            contentType: null,
-        };
-
-    // 4X - Temporary failure
-    } else if (bytes[0] === 52) {
-        let text;
-        // 41 - unavailable
-        if (bytes[1] === 49) {
-            text = `<p>${code} Server Unavailable</p>`;
-        // 42 - cgi
-        } else if (bytes[1] === 50) {
-            text = `<p>${code} CGI Error </p>`;
-        // 43 - proxy
-        } else if (bytes[1] === 51) {
-            text = `<p>${code} Proxy Error </p>`;
-        // 44 - slow down
-        } else if (bytes[1] === 52) {
-            text = `<p>${code} Too Many Requests </p>`;
-        } else {
-            text = `<p>${code} Temporary Server Failure </p>`;
-        }
-        const message = dec.decode(bytes.slice(3));
-        text += "<p>" + message + "</p>";
-
-        return { text, contentType: null };
-
-    // 5X - Permanent failure
-    } else if (bytes[0] === 53) {
-        let text;
-        // 51 - not found
-        if (bytes[1] === 49) {
-            text = `<p>${code} Not Found </p>`;
-        // 52 - gone
-        } else if (bytes[1] === 50) {
-            text = `<p>${code} Resource No Longer Available </p>`;
-        // 53 - proxy
-        } else if (bytes[1] === 51) {
-            text = `<p>${code} Proxy Request Refused </p>`;
-        // 59 - bad request
-        } else if (bytes[1] === 57) {
-            text = `<p>${code} Bad Request </p>`;
-        } else {
-            text = `<p>${code} Permanent Server Failure </p>`;
-        }
-        const message = dec.decode(bytes.slice(3));
-        text += "<p>" + message + "</p>";
-
-        return {text, contentType: null};
-    } else {
-        return {text: "<p> Invalid response </p>", contentType: null}
-    }
+    const code = (code10 - 48) * 10 + code1 - 48;
+    const textBs = bytes.slice(3);
+    const text = (new TextDecoder()).decode(textBs);
+    return {code, text};
 }
 
 /**
@@ -390,22 +304,88 @@ function displayResponse(responseB64, currentLocation) {
 
     // Find the end of the header by "\r\n"
     let i = 0;
-    while (resp[i] != 13 && resp[i+1] != 10) {
+    while (resp[i] != 13 && resp[i+1] != 10 && i < resp.length) {
         i += 1;
     }
     const header = resp.slice(0, i);
     const body = resp.slice(i+2);
 
-    const headerRepr = displayHeader(header);
-    if (headerRepr.contentType !== null) {
-        if (headerRepr.contentType.startsWith("text/gemini")) {
+    const headerRepr = parseHeader(header);
+    if (headerRepr === null) {
+        const div = document.createElement("div");
+        div.innerText = "Malformed server reply";
+        console.log(header);
+        document.body.replaceChildren(div);
+        return
+    };
+    const {code, text} = headerRepr;
+
+    console.log("response", code, text);
+
+    // 1X - Input required
+    if (code >= 10 && code <= 19) {
+        const div = document.createElement("div");
+        const notice = document.createElement("div");
+        notice.innerText = code === 11 ? "Sensitive input required" : "Input required";
+        const request = document.createElement("div");
+        request.innerText = text;
+        div.appendChild(notice);
+        div.appendChild(request);
+        document.body.replaceChildren(div);
+
+    // 2X - Success
+    } else if (code >= 20 && code <= 29) {
+        if (text.startsWith("text/gemini")) {
             const article = parseGemtext(body, currentLocation);
             document.body.replaceChildren(article);
         } else {
-            document.write("unknown content type: " + headerRepr.contentType);
+            const div = document.createElement("div");
+            div.innerText = "Unknown content type: " + text;
+            document.body.replaceChildren(div);
         }
+
+    // 3X - Redirect
+    } else if (code >= 30 && code <= 39) {
+        const div = document.createElement("div");
+        const notice = document.createElement("div");
+        notice.innerText =
+            code === 30 ? "Temporary redirect" :
+            code === 31 ? "Permanent redirect" :
+            "Redirect";
+        const target = document.createElement("a");
+        target.href = text;
+        target.innerText = text;
+        div.appendChild(notice);
+        div.appendChild(target);
+        document.body.replaceChildren(div);
+
+    // 4X - Temporary failure
+    } else if (code >= 40 && code <= 49) {
+        const div = document.createElement("div");
+        div.innerText =
+            code === 41 ? "41 Server Unavailable" :
+            code === 42 ? "42 CGI Error" :
+            code === 43 ? "43 Server Proxy Error" :
+            code === 44 ? "44 Too Many Requests" :
+            `${code} Temporary Server Failure`;
+        document.body.replaceChildren(div);
+
+    // 5X - Permanent failure
+    } else if (code >= 50 && code <= 59) {
+        const div = document.createElement("div");
+        div.innerText =
+            code === 51 ? "51 Not Found" :
+            code === 52 ? "52 Resource No Longer Available" :
+            code === 53 ? "53 Server Proxy Request Refused" :
+            code === 59 ? "59 Bad Request" :
+            `${code} Permanent Server Failure`;
+        document.body.replaceChildren(div);
+
+    // Unknown status
     } else {
-        document.write(headerRepr.text);
+        const div = document.createElement("div");
+        div.innerText = "Malformed server reply";
+        document.body.replaceChildren(div);
     }
 }
 
@@ -429,7 +409,7 @@ function navigateTo(queryPart) {
     }
     const webUrl = decodeURIComponent(queryPart.slice(1));
     if (!webUrl.startsWith("web+gemini://")) {
-        displayError("Navigate to a gemini:// url to start");
+        displayError(`Unknown protocol in '${webUrl}'. Navigate to a gemini:// url to start`);
         return;
     }
     const url = webUrl.slice(4);
@@ -457,7 +437,12 @@ function navigateTo(queryPart) {
 }
 
 // Check if this page is in the history
-if (history.state !== null && "gemfox" in history.state) {
+const wasReload = performance.getEntriesByType("navigation")[0]?.type === "reload";
+if (wasReload) {
+    console.log("clear history on refresh");
+    history.replaceState(null);
+    navigateTo(window.location.search);
+} else if (history.state !== null && "gemfox" in history.state) {
     const oldState = history.state.gemfox;
     if (
         "resp" in oldState
@@ -465,6 +450,7 @@ if (history.state !== null && "gemfox" in history.state) {
         && "url" in oldState
         && typeof oldState.url === "string"
     ) {
+        console.log("restored from history");
         displayResponse(oldState.resp, oldState.url);
     } else{
         console.error("invalid history item", oldState);
