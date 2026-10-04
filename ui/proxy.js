@@ -58,12 +58,13 @@ function adjustHref(href, currentLocation) {
 /**
  * @param {Uint8Array} bytes
  * @param {string} currentLocation - used to replace hrefs to gemini
- * @returns HTMLElement
+ * @returns {{article: HTMLElement, title: string | null }}
  */
 function parseGemtext(bytes, currentLocation) {
     const dec = new TextDecoder();
 
     const article = document.createElement("article");
+    let title = null;
 
     let i = 0;
 
@@ -139,6 +140,11 @@ function parseGemtext(bytes, currentLocation) {
             ws();
             const text = textToNl();
 
+            // Set the first found header as title
+            if (title === null) {
+                title = text;
+            }
+
             h.innerText = text;
             article.appendChild(h);
 
@@ -210,7 +216,7 @@ function parseGemtext(bytes, currentLocation) {
 
     finishBlocks();
 
-    return article;
+    return {article, title};
 }
 
 /**
@@ -333,8 +339,11 @@ function displayResponse(responseB64, currentLocation) {
     // 2X - Success
     } else if (code >= 20 && code <= 29) {
         if (text.startsWith("text/gemini")) {
-            const article = parseGemtext(body, currentLocation);
+            const {article, title} = parseGemtext(body, currentLocation);
             document.body.replaceChildren(article);
+            if (title !== null) {
+                document.title = title;
+            }
         } else if (text.startsWith("text/plain")) {
             const article = document.createElement("pre");
             article.innerText = (new TextDecoder()).decode(body);
@@ -414,6 +423,8 @@ function navigateTo(queryPart) {
         return;
     }
     const url = webUrl.slice(4);
+
+    document.title = url;
 
     /**
      * @param {object} resp
