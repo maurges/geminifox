@@ -302,29 +302,13 @@ function displayProgress(message) {
 }
 
 /**
- * @param {string} responseB64
+ * @param {number} code
+ * @param {string} text - header text
+ * @param {Uint8Array} body
  * @param {string} currentLocation
+ * @returns {{body: HTMLElement, title?: string | null, redirect?: string}}
  */
-function displayResponse(responseB64, currentLocation) {
-    const resp = Uint8Array.fromBase64(responseB64);
-
-    // Find the end of the header by "\r\n"
-    let i = 0;
-    while (resp[i] != 13 && resp[i+1] != 10 && i < resp.length) {
-        i += 1;
-    }
-    const header = resp.slice(0, i);
-    const body = resp.slice(i+2);
-
-    const headerRepr = parseHeader(header);
-    if (headerRepr === null) {
-        const div = document.createElement("div");
-        div.innerText = "Malformed server reply";
-        document.body.replaceChildren(div);
-        return
-    };
-    const {code, text} = headerRepr;
-
+function displayResponse(code, text, body, currentLocation) {
     // 1X - Input required
     if (code >= 10 && code <= 19) {
         const div = document.createElement("div");
@@ -334,24 +318,21 @@ function displayResponse(responseB64, currentLocation) {
         request.innerText = text;
         div.appendChild(notice);
         div.appendChild(request);
-        document.body.replaceChildren(div);
+        return {body: div};
 
     // 2X - Success
     } else if (code >= 20 && code <= 29) {
         if (text.startsWith("text/gemini")) {
             const {article, title} = parseGemtext(body, currentLocation);
-            document.body.replaceChildren(article);
-            if (title !== null) {
-                document.title = title;
-            }
+            return {body: article, title};
         } else if (text.startsWith("text/plain")) {
             const article = document.createElement("pre");
             article.innerText = (new TextDecoder()).decode(body);
-            document.body.replaceChildren(article);
+            return {body: article};
         } else {
             const div = document.createElement("div");
             div.innerText = "Unknown content type: " + text;
-            document.body.replaceChildren(div);
+            return {body: div};
         }
 
     // 3X - Redirect
@@ -363,11 +344,12 @@ function displayResponse(responseB64, currentLocation) {
             code === 31 ? "Permanent redirect" :
             "Redirect";
         const target = document.createElement("a");
-        target.href = text;
-        target.innerText = text;
+        const href = adjustHref(text, currentLocation);
+        target.href = href;
+        target.innerText = href;
         div.appendChild(notice);
         div.appendChild(target);
-        document.body.replaceChildren(div);
+        return {body: div, redirect: text};
 
     // 4X - Temporary failure
     } else if (code >= 40 && code <= 49) {
@@ -378,7 +360,7 @@ function displayResponse(responseB64, currentLocation) {
             code === 43 ? "43 Server Proxy Error" :
             code === 44 ? "44 Too Many Requests" :
             `${code} Temporary Server Failure`;
-        document.body.replaceChildren(div);
+        return {body: div};
 
     // 5X - Permanent failure
     } else if (code >= 50 && code <= 59) {
@@ -389,13 +371,92 @@ function displayResponse(responseB64, currentLocation) {
             code === 53 ? "53 Server Proxy Request Refused" :
             code === 59 ? "59 Bad Request" :
             `${code} Permanent Server Failure`;
-        document.body.replaceChildren(div);
+        return {body: div};
 
     // Unknown status
     } else {
         const div = document.createElement("div");
         div.innerText = "Malformed server reply";
+        return {body: div};
+    }
+}
+
+/**
+ * @param {string} responseB64
+ * @param {string} currentLocation
+ * @param {string[]} redirects
+ */
+function handleResponse(responseB64, currentLocation, redirects) {
+    const resp = Uint8Array.fromBase64(responseB64);
+
+    // Find the end of the header by "\r\n"
+    let i = 0;
+    while (resp[i] != 13 && resp[i+1] != 10 && i < resp.length) {
+        i = resp.indexOf(13, i);
+        if (i === -1) {
+            i = resp.length;
+        }
+    }
+    const header = resp.slice(0, i);
+    const body = resp.slice(i+2);
+
+    const headerRepr = parseHeader(header);
+    if (headerRepr === null) {
+        const div = document.createElement("div");
+        div.innerText = "Malformed server reply";
         document.body.replaceChildren(div);
+        return;
+    };
+
+    const rendered = displayResponse(headerRepr.code, headerRepr.text, body, currentLocation);
+
+    if (rendered.title) {
+        document.title = rendered.title;
+    }
+
+    if (rendered.redirect) {
+        redirects.push(rendered.redirect);
+        // First do a loop check
+        if (redirects.length == 15) {
+            const uniqs = new Set(redirects);
+            if (uniqs.size < 15) {
+                const div = document.createElement("div");
+                const p = document.createElement("p");
+                p.innerText = "Redirect loop detected. Trace:";
+                div.appendChild(p);
+                const ul = document.createElement("ul");
+                for (const href of redirects) {
+                    const li = document.createElement("li");
+                    li.innerText = href;
+                    ul.appendChild(li);
+                }
+                div.appendChild(ul);
+                document.body.replaceChildren(div);
+            // No loops, continue redirecting
+            } else {
+                navigateTo(rendered.redirect, redirects);
+            }
+        // Abort if too many redirects
+        } else if (redirects.length > 30) {
+            const div = document.createElement("div");
+            const p = document.createElement("p");
+            p.innerText = "Too many redirects. Trace:";
+            div.appendChild(p);
+            const ul = document.createElement("ul");
+            for (const href of redirects) {
+                const li = document.createElement("li");
+                li.innerText = href;
+                ul.appendChild(li);
+            }
+            div.appendChild(ul);
+            document.body.replaceChildren(div);
+        // Redirect to the new page
+        } else {
+            navigateTo(rendered.redirect, redirects);
+        }
+    // No redirects, render the page
+    } else {
+        document.body.replaceChildren(rendered.body);
     }
 }
 
@@ -408,22 +469,11 @@ function displayError(message) {
     document.body.replaceChildren(div);
 }
 
-/**
- * @param {string} queryPart
- * @returns Promise<void>
+/** Load and display a gemini url
+ * @param {string} url
+ * @param {string[]} redirects
  */
-function navigateTo(queryPart) {
-    if (!queryPart.startsWith("?")) {
-        displayError("Navigate to a gemini:// url to start");
-        return;
-    }
-    const webUrl = decodeURIComponent(queryPart.slice(1));
-    if (!webUrl.startsWith("web+gemini://")) {
-        displayError(`Unknown protocol in '${webUrl}'. Navigate to a gemini:// url to start`);
-        return;
-    }
-    const url = webUrl.slice(4);
-
+function navigateTo(url, redirects) {
     document.title = url;
 
     /**
@@ -433,8 +483,8 @@ function navigateTo(queryPart) {
         if (typeof resp === "string") {
             port.disconnect();
             // Remember the fetched result
-            history.replaceState({gemfox: {resp, url}}, "");
-            displayResponse(resp, url);
+            history.replaceState({gemfox: {resp, url}}, "", "proxy.html?web+" + url);
+            handleResponse(resp, url, redirects);
         } else {
             displayProgress(resp);
         }
@@ -448,12 +498,29 @@ function navigateTo(queryPart) {
     port.postMessage(messageB64);
 }
 
+/** Open a url provided by the query param to the extension
+ * @param {string} queryPart
+ */
+function openPage(queryPart) {
+    if (!queryPart.startsWith("?")) {
+        displayError("Navigate to a gemini:// url to start");
+        return;
+    }
+    const webUrl = decodeURIComponent(queryPart.slice(1));
+    if (!webUrl.startsWith("web+gemini://")) {
+        displayError(`Unknown protocol in '${webUrl}'. Navigate to a gemini:// url to start`);
+        return;
+    }
+    const url = webUrl.slice(4);
+    navigateTo(url, []);
+}
+
 // Check if we've been on this page before
 /** @ts-ignore */
 const wasReload = performance.getEntriesByType("navigation")[0]?.type === "reload";
 if (wasReload) {
     history.replaceState(null, "");
-    navigateTo(window.location.search);
+    openPage(window.location.search);
 } else if (history.state !== null && "gemfox" in history.state) {
     const oldState = history.state.gemfox;
     if (
@@ -462,13 +529,13 @@ if (wasReload) {
         && "url" in oldState
         && typeof oldState.url === "string"
     ) {
-        displayResponse(oldState.resp, oldState.url);
+        handleResponse(oldState.resp, oldState.url, []);
     } else{
         console.error("invalid history item", oldState);
-        navigateTo(window.location.search);
+        openPage(window.location.search);
     }
 } else {
     // On initial load, navigate to the location
     // The manifest passes the location as a whole query part, it's url-encoded
-    navigateTo(window.location.search);
+    openPage(window.location.search);
 }
