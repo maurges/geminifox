@@ -327,12 +327,38 @@ function displayResponse(code, text, body, currentLocation) {
     // 1X - Input required
     if (code >= 10 && code <= 19) {
         const div = document.createElement("div");
+
         const notice = document.createElement("div");
         notice.innerText = code === 11 ? "Sensitive input required" : "Input required";
-        const request = document.createElement("div");
-        request.innerText = text;
         div.appendChild(notice);
-        div.appendChild(request);
+
+        const form = document.createElement("form");
+
+        const label = document.createElement("label");
+        label.innerText = text;
+        form.appendChild(label);
+
+        const input = document.createElement("input");
+        input.type = "text";
+        form.appendChild(input);
+
+        const button = document.createElement("button");
+        button.innerText = "input";
+        button.type = "submit";
+        form.appendChild(button);
+
+        form.addEventListener("submit", e => {
+            e.preventDefault();
+
+            const url = expect(URL.parse(currentLocation), "url failed to parse");
+            url.search = input.value;
+            url.protocol = "web+" + url.protocol;
+            document.location.search = url.toString();
+        });
+
+        div.appendChild(form);
+
+
         return {body: div};
 
     // 2X - Success
