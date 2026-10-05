@@ -1,5 +1,5 @@
 { "manifest_version": 2
-, "name": "gemini_browser"
+, "name": "geminifox"
 , "version": "0.0"
 
 , "description": "Browse the geminispace from firefox"
@@ -23,7 +23,7 @@
 
 , "browser_specific_settings":
     { "gecko":
-        { "id": "gemini_browser@amo.morj.men"
+        { "id": "geminifox@amo.morj.men"
         , "strict_min_version": "50.0"
         }
     }

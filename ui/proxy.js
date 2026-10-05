@@ -247,6 +247,7 @@ function parseProgress(o) {
     const unexpected_message = "Fatal error: unexpected message from the native program";
     if (typeof o !== "object") {
         // Malformed message
+        console.log("unexpected message type", o);
         const div = document.createElement("div");
         div.innerText = unexpected_message;
         return div;
@@ -260,6 +261,8 @@ function parseProgress(o) {
             "INTERNAL_SSL_SETUP": "Internal error: SSL setup failed",
             "INTERNAL_SSL_HOSTNAME": "Internal error: SSL hostname binding failed",
 
+            "NATIVE_FAILED": "Failed to run the native program",
+
             "NETWORK_FAILED": "Network unreachable",
             "LOOKUP_FAILED": "DNS record for the server returned empty",
             "CONNECT_FAILED": "Failed to connect to the server",
@@ -268,7 +271,13 @@ function parseProgress(o) {
             "RESPONSE_FAILED": "Server didn't provide the response",
         };
         const div = document.createElement("div");
-        div.innerText = errors[o.error] || unexpected_message;
+        const text = errors[o.error];
+        if (text) {
+            div.innerText = text;
+        } else {
+            console.log("unexpected error", o);
+            div.innerText = unexpected_message;
+        }
         return div;
     } else if ("progress" in o && typeof o.progress === "string") {
         /** @type {Record<string, string>}*/
@@ -282,7 +291,13 @@ function parseProgress(o) {
         if (o.progress.startsWith("RESPONSE_PARTIAL ")) {
             div.innerText = "Downloaded " + o.progress.slice(17) + " bytes...";
         } else {
-            div.innerText = statuses[o.progress] || unexpected_message;
+            const text = statuses[o.progress];
+            if (text) {
+                div.innerText = text;
+            } else {
+                console.log("unexpected progress", o);
+                div.innerText = unexpected_message;
+            }
         }
         return div;
     } else {
@@ -483,7 +498,7 @@ function navigateTo(url, redirects) {
         if (typeof resp === "string") {
             port.disconnect();
             // Remember the fetched result
-            history.replaceState({gemfox: {resp, url}}, "", "proxy.html?web+" + url);
+            history.replaceState({geminifox: {resp, url}}, "", "proxy.html?web+" + url);
             handleResponse(resp, url, redirects);
         } else {
             displayProgress(resp);
@@ -521,8 +536,8 @@ const wasReload = performance.getEntriesByType("navigation")[0]?.type === "reloa
 if (wasReload) {
     history.replaceState(null, "");
     openPage(window.location.search);
-} else if (history.state !== null && "gemfox" in history.state) {
-    const oldState = history.state.gemfox;
+} else if (history.state !== null && "geminifox" in history.state) {
+    const oldState = history.state.geminifox;
     if (
         "resp" in oldState
         && typeof oldState.resp === "string"

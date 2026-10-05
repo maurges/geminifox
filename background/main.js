@@ -8,12 +8,12 @@
  * @param {(msg: unknown) => void} onMessage
  */
 function messageToNative(message, onMessage) {
-    const natport = browser.runtime.connectNative("gemini_browser");
+    const natport = browser.runtime.connectNative("geminifox");
 
     let didRespond = false;
     natport.onDisconnect.addListener(p => {
         if (!didRespond) {
-            console.log("Disconnected with error", p);
+            console.log("Disconnected with error", p.error);
             onMessage({"error": "NATIVE_FAILED"})
         }
     });
