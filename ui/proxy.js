@@ -82,7 +82,7 @@ function parseGemtext(bytes, currentLocation) {
     function textToNl() {
         const start = i;
         const end = tonl();
-        return dec.decode(bytes.slice(start, end));
+        return dec.decode(bytes.subarray(start, end));
     }
 
     /** @type {null | HTMLElement} */
@@ -114,7 +114,7 @@ function parseGemtext(bytes, currentLocation) {
                 i += 1;
             }
             const hrefEnd = i;
-            const href = dec.decode(bytes.slice(hrefStart, hrefEnd));
+            const href = dec.decode(bytes.subarray(hrefStart, hrefEnd));
             ws();
             const mbText = textToNl();
             const text = mbText.length === 0 ? href : mbText;
@@ -160,7 +160,7 @@ function parseGemtext(bytes, currentLocation) {
             const end = i - 1;
             // The ending line is likewise skipped
             tonl();
-            const text = dec.decode(bytes.slice(start, end));
+            const text = dec.decode(bytes.subarray(start, end));
 
             const pre = document.createElement("pre");
             pre.innerText = text;
@@ -234,7 +234,7 @@ function parseHeader(bytes) {
     }
 
     const code = (code10 - 48) * 10 + code1 - 48;
-    const textBs = bytes.slice(3);
+    const textBs = bytes.subarray(3);
     const text = (new TextDecoder()).decode(textBs);
     return {code, text};
 }
@@ -319,7 +319,7 @@ function displayProgress(message) {
 /**
  * @param {number} code
  * @param {string} text - header text
- * @param {Uint8Array} body
+ * @param {Uint8Array<ArrayBuffer>} body
  * @param {string} currentLocation
  * @returns {{body: HTMLElement, title?: string | null, redirect?: string}}
  */
@@ -370,6 +370,21 @@ function displayResponse(code, text, body, currentLocation) {
             const article = document.createElement("pre");
             article.innerText = (new TextDecoder()).decode(body);
             return {body: article};
+        } else if (text.startsWith("image/")) {
+            const blob = new Blob([body], { type: text });
+            const blobUrl = URL.createObjectURL(blob);
+            const img = document.createElement("img");
+            img.src = blobUrl;
+            img.onload = () => { URL.revokeObjectURL(blobUrl) };
+            return {body: img};
+        } else if (text.startsWith("video/")) {
+            const blob = new Blob([body], { type: text });
+            const blobUrl = URL.createObjectURL(blob);
+            const video = document.createElement("video");
+            video.src = blobUrl;
+            video.controls = true;
+            video.onload = () => { URL.revokeObjectURL(blobUrl) };
+            return {body: video};
         } else {
             const div = document.createElement("div");
             div.innerText = "Unknown content type: " + text;
@@ -438,8 +453,8 @@ function handleResponse(responseB64, currentLocation, redirects) {
             i = resp.length;
         }
     }
-    const header = resp.slice(0, i);
-    const body = resp.slice(i+2);
+    const header = resp.subarray(0, i);
+    const body = resp.subarray(i+2);
 
     const headerRepr = parseHeader(header);
     if (headerRepr === null) {
