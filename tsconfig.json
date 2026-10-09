@@ -1,6 +1,9 @@
 { "compilerOptions":
     { "lib": [ "dom", "esnext" ]
 
+    , "checkJs": true
+    , "noEmit": true
+
     , "strict": true
     , "allowUnusedLabels": false
     , "allowUnreachableCode": false
@@ -15,8 +18,6 @@
     , "noUnusedLocals": false
 
     , "isolatedModules": true
-
-    , "checkJs": true
 
     , "esModuleInterop": true
     , "skipLibCheck": true
