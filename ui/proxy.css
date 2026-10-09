@@ -1,0 +1,16 @@
+/* Display links horizontally in a group */
+.link-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    margin: 1rem 0;
+
+    /* But if there are more than 5, display as a column */
+    &:has(> :nth-child(6)) {
+        flex-direction: column;
+    }
+
+    > a {
+        white-space: nowrap;
+    }
+}

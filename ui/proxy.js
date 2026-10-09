@@ -89,14 +89,21 @@ function parseGemtext(bytes, currentLocation) {
     let currentList = null;
     /** @type {null | HTMLElement} */
     let currentQuote = null;
-    function finishBlocks() {
-        if (currentList !== null) {
+    /** @type {null | HTMLElement} */
+    let currentLinks = null;
+    /** @param {"list"|"quote"|"links"|undefined} [thisBlock] */
+    function finishBlocks(thisBlock) {
+        if (thisBlock !== "list" && currentList !== null) {
             article.appendChild(currentList);
             currentList = null;
         }
-        if (currentQuote !== null) {
+        if (thisBlock !== "quote" && currentQuote !== null) {
             article.appendChild(currentQuote);
             currentQuote = null;
+        }
+        if (thisBlock !== "links" && currentLinks !== null) {
+            article.appendChild(currentLinks);
+            currentLinks = null;
         }
     }
 
@@ -105,8 +112,14 @@ function parseGemtext(bytes, currentLocation) {
 
         // => - link
         if (bytes[i] == 61 && bytes[i+1] == 62) {
-            finishBlocks();
-            i += 2;
+            finishBlocks("links");
+            // Create the current block if doesn't exist
+            if (currentLinks === null) {
+                currentLinks = document.createElement("div");
+                currentLinks.classList.add("link-group");
+            }
+
+            i += 2; // skip the arrow
             ws();
             const hrefStart = i;
             // Url is delimited by whitespace
@@ -119,12 +132,10 @@ function parseGemtext(bytes, currentLocation) {
             const mbText = textToNl();
             const text = mbText.length === 0 ? href : mbText;
 
-            const container = document.createElement("p");
             const a = document.createElement("a");
             a.href = adjustHref(href, currentLocation);
             a.innerText = text;
-            container.appendChild(a);
-            article.appendChild(container);
+            currentLinks.appendChild(a);
 
         // # - heading
         } else if (bytes[i] === 35) {
@@ -168,11 +179,7 @@ function parseGemtext(bytes, currentLocation) {
 
         // * - list
         } else if (bytes[i] === 42) {
-            // Finish the quote if exists
-            if (currentQuote !== null) {
-                article.appendChild(currentQuote);
-                currentQuote = null;
-            }
+            finishBlocks("list");
             // Create the current list if doesn't exist
             if (currentList === null) {
                 currentList = document.createElement("ul");
@@ -188,10 +195,7 @@ function parseGemtext(bytes, currentLocation) {
         // > - quote
         } else if (bytes[i] === 62) {
             // Finish the list if exists
-            if (currentList !== null) {
-                article.appendChild(currentList);
-                currentList = null;
-            }
+            finishBlocks("quote");
             // Create the current quote if doesn't exist
             if (currentQuote === null) {
                 currentQuote = document.createElement("blockquote");
