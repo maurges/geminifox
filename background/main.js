@@ -5,26 +5,28 @@
 
 /**
  * @param {object} message
- * @param {(msg: unknown) => void} onMessage
+ * @param {browser.runtime.Port} pagePort
  */
-function messageToNative(message, onMessage) {
+function messageToNative(message, pagePort) {
     const natport = browser.runtime.connectNative("geminifox");
 
     let didRespond = false;
     natport.onDisconnect.addListener(p => {
         if (!didRespond) {
             console.log("Disconnected with error", p.error);
-            onMessage({"error": "NATIVE_FAILED"})
+            pagePort.postMessage({"error": "NATIVE_FAILED"})
         }
+        pagePort.disconnect();
     });
     if (natport.error) {
         console.log("Error connecting", natport.error);
-        onMessage({"error": "NATIVE_FAILED"})
+        pagePort.postMessage({"error": "NATIVE_FAILED"})
+        pagePort.disconnect();
     };
 
     natport.onMessage.addListener(msg => {
         didRespond = true;
-        return onMessage(msg);
+        return pagePort.postMessage(msg);
     });
     natport.postMessage(message);
 }
@@ -35,7 +37,7 @@ function messageToNative(message, onMessage) {
 function proxyConnected(port) {
     port.onMessage.addListener(message => messageToNative(
         message,
-        msg => port.postMessage(msg),
+        port,
     ));
 }
 

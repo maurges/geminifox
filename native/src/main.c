@@ -16,6 +16,80 @@
 #include "mbedtls/ssl.h"
 
 
+struct bytevec {
+    unsigned char * data;
+    size_t length;
+    size_t capacity;
+};
+
+struct bytevec bytevec_empty() {
+    struct bytevec r = {
+        .data = NULL,
+        .length = 0,
+        .capacity = 0,
+    };
+    return r;
+}
+
+#if 0
+static void bytevec_append(struct bytevec * vec, unsigned char * buf, size_t length) {
+    if (vec->data == NULL) {
+        vec->capacity = 256;
+        while (vec->capacity < length) {
+            vec->capacity *= 2;
+        }
+        vec->data = malloc(vec->capacity);
+    } else if (vec->length + length >= vec->capacity) {
+        // realloc
+        while (vec->capacity < vec->length + length) {
+            vec->capacity *= 2;
+        }
+        unsigned char * data = malloc(vec->capacity);
+
+        memcpy(data, vec->data, vec->length);
+        free(vec->data);
+        vec->data = data;
+    }
+    memcpy(vec->data + vec->length, buf, length);
+    vec->length += length;
+}
+#endif
+
+static void free_bytevec(struct bytevec * vec) {
+    if (vec->data) {
+        free(vec->data);
+    }
+    vec->data = NULL;
+    vec->length = 0;
+    vec->capacity = 0;
+}
+
+struct bytevec base64_encode(const unsigned char * data, size_t length) {
+    size_t out_length = 0;
+
+    int r = mbedtls_base64_encode(NULL, 0, &out_length, data, length);
+    if (r != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
+        fprintf(stderr, "base64 encode failed with %d\n", r);
+        return bytevec_empty();
+    }
+    struct bytevec encoded = {
+        .data = malloc(out_length),
+        .length = out_length,
+        .capacity = out_length,
+    };
+    r = mbedtls_base64_encode(encoded.data, out_length, &out_length, data, length);
+
+    if (r != 0) {
+        fprintf(stderr, "base64 encode failed with %d\n", r);
+        free_bytevec(&encoded);
+    }
+    // Some fucking times the encoded length is less than queried, so update it
+    encoded.length = out_length;
+
+    return encoded;
+}
+
+
 ///// Error and progress values /////
 #define INTERNAL_INIT "INTERNAL_INIT"
 #define INTERNAL_SSL_CONFIG "INTERNAL_SSL_CONFIG"
@@ -33,30 +107,42 @@
 #define ESTABLISH_CONNECTION "ESTABLISH_CONNECTION"
 #define ESTABLISH_HANDSHAKE "ESTABLISH_HANDSHAKE"
 #define SEND_REQUEST "SEND_REQUEST"
-#define RESPONSE_PARTIAL "RESPONSE_PARTIAL"
 
+
+struct output {
+    void (* write_progress) (const char * message, size_t length_ll);
+    void (* write_error) (const char * message, size_t length_ll);
+    void (* write_result) (const unsigned char * message, size_t length_ll);
+};
+
+
+#define WRITE_JSON_BODY(field) \
+    const char prefix[] = "{\"" field "\":\""; \
+    const char suffix[] = "\"}"; \
+    uint32_t length = sizeof(prefix) - 1 + length_ll - 1 + sizeof(suffix) - 1; \
+    fwrite(&length, sizeof(length), 1, stdout); \
+    fwrite(prefix, 1, sizeof(prefix) - 1, stdout); \
+    fwrite(message, 1, length_ll - 1, stdout); \
+    fwrite(suffix, 1, sizeof(suffix) - 1, stdout); \
+    fflush(stdout)
 /// length_ll includes the null terminator for convenience
-void write_progress(const char * message, size_t length_ll) {
-    const char prefix[] = "{\"progress\":\"";
-    const char suffix[] = "\"}";
-    uint32_t length = sizeof(prefix) - 1 + length_ll - 1+ sizeof(suffix) - 1;
-    fwrite(&length, sizeof(length), 1, stdout);
-    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
-    fwrite(message, 1, length_ll - 1, stdout);
-    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
-    fflush(stdout);
+static void write_progress_json(const char * message, size_t length_ll) {
+    WRITE_JSON_BODY("progress");
+}
+static void write_error_json(const char * message, size_t length_ll) {
+    WRITE_JSON_BODY("error");
+}
+static void write_result_json(const unsigned char * message_raw, size_t length_raw) {
+    struct bytevec r = base64_encode(message_raw, length_raw);
+    // Strip the framing quotes
+    const char * message = (char *)r.data;
+    size_t length_ll = r.length + 1; // because it subtracts 1 in macro
+    WRITE_JSON_BODY("part");
 }
 
-/// length_ll includes the null terminator for convenience
-void write_error(const char * message, size_t length_ll) {
-    const char prefix[] = "{\"error\":\"";
-    const char suffix[] = "\"}";
-    uint32_t length = sizeof(prefix) - 1 + length_ll - 1 + sizeof(suffix) - 1;
-    fwrite(&length, sizeof(length), 1, stdout);
-    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
-    fwrite(message, 1, length_ll - 1, stdout);
-    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
-    fflush(stdout);
+static void write_null(const char *, size_t) {}
+static void write_verbatim(const unsigned char * message, size_t length) {
+    fwrite(message, 1, length, stdout);
 }
 
 
@@ -143,83 +229,8 @@ static void free_connect_info(struct connect_info * x) {
     }
 }
 
-struct bytevec {
-    unsigned char * data;
-    size_t length;
-    size_t capacity;
-};
 
-struct bytevec bytevec_empty() {
-    struct bytevec r = {
-        .data = NULL,
-        .length = 0,
-        .capacity = 0,
-    };
-    return r;
-}
-
-static void bytevec_append(struct bytevec * vec, unsigned char * buf, size_t length) {
-    if (vec->data == NULL) {
-        vec->capacity = 256;
-        while (vec->capacity < length) {
-            vec->capacity *= 2;
-        }
-        vec->data = malloc(vec->capacity);
-    } else if (vec->length + length >= vec->capacity) {
-        // realloc
-        while (vec->capacity < vec->length + length) {
-            vec->capacity *= 2;
-        }
-        unsigned char * data = malloc(vec->capacity);
-
-        memcpy(data, vec->data, vec->length);
-        free(vec->data);
-        vec->data = data;
-    }
-    memcpy(vec->data + vec->length, buf, length);
-    vec->length += length;
-}
-
-static void free_bytevec(struct bytevec * vec) {
-    if (vec->data) {
-        free(vec->data);
-    }
-    vec->data = NULL;
-    vec->length = 0;
-    vec->capacity = 0;
-}
-
-
-/// Encode with json framing quotes around the result
-struct bytevec base64_encode(struct bytevec * data) {
-    size_t out_length = 0;
-
-    int r = mbedtls_base64_encode(NULL, 0, &out_length, data->data, data->length);
-    if (r != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
-        fprintf(stderr, "base64 encode failed with %d\n", r);
-        return bytevec_empty();
-    }
-    struct bytevec encoded = {
-        .data = malloc(out_length + 2),
-        .length = out_length + 2,
-        .capacity = out_length + 2,
-    };
-    r = mbedtls_base64_encode(encoded.data + 1, out_length, &out_length, data->data, data->length);
-
-    if (r != 0) {
-        fprintf(stderr, "base64 encode failed with %d\n", r);
-        free_bytevec(&encoded);
-    }
-    // Some fucking times the encoded length is less than queried, so update it
-    encoded.length = out_length + 2;
-    // add json string quotes
-    encoded.data[0] = '"';
-    encoded.data[out_length + 1] = '"';
-
-    return encoded;
-}
-
-static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, bool stdio_mode) {
+static int fetch_gemini(struct connect_info * cinfo, struct output p) {
     int ret = 1;
     const char * pers = "geminifox";
 
@@ -238,6 +249,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
 
     int sock = -1;
     struct addrinfo * addresses = NULL;
+    unsigned char * buf = NULL;
 
     // Seed the rng
     ret = mbedtls_ctr_drbg_seed(
@@ -249,40 +261,30 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     );
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
-        if (stdio_mode) {
-            write_error(INTERNAL_INIT, sizeof(INTERNAL_INIT));
-        }
+        p.write_error(INTERNAL_INIT, sizeof(INTERNAL_INIT));
         goto exit;
     }
 
     // Initialize certificates - skipped
 
     // Lookup the domain
-    if (stdio_mode) {
-        write_progress(LOOKUP_DOMAIN, sizeof(LOOKUP_DOMAIN));
-    }
+    p.write_progress(LOOKUP_DOMAIN, sizeof(LOOKUP_DOMAIN));
     struct addrinfo lookup_params = { 0 };
     lookup_params.ai_family = AF_UNSPEC; // both ipv6 and ipv4
     lookup_params.ai_socktype = SOCK_STREAM; // tcp
     ret = getaddrinfo(cinfo->host, cinfo->port ? cinfo->port : "1965", &lookup_params, &addresses);
     if (ret == EAI_SYSTEM) {
         fprintf(stderr, "system error in domain lookup\n");
-        if (stdio_mode) {
-            write_error(NETWORK_FAILED, sizeof(NETWORK_FAILED));
-        }
+            p.write_error(NETWORK_FAILED, sizeof(NETWORK_FAILED));
         goto exit;
     } else if (ret != 0) {
         fprintf(stderr, "getaddrinfo failed with %d\n", ret);
-        if (stdio_mode) {
-            write_error(LOOKUP_FAILED, sizeof(LOOKUP_FAILED));
-        }
+        p.write_error(LOOKUP_FAILED, sizeof(LOOKUP_FAILED));
         goto exit;
     }
 
     // Try to connect to all returned addrs in sequence
-    if (stdio_mode) {
-        write_progress(ESTABLISH_CONNECTION, sizeof(ESTABLISH_CONNECTION));
-    }
+    p.write_progress(ESTABLISH_CONNECTION, sizeof(ESTABLISH_CONNECTION));
     // Starting with ipv6 only
     size_t address_candidates = 0;
     for (struct addrinfo * addr = addresses; addr != NULL; addr = addr->ai_next) {
@@ -322,9 +324,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     // If that failed too, abort
     if (sock == -1) {
         fprintf(stderr, "failed to connect to any of %lu addresses\n", address_candidates);
-        if (stdio_mode) {
-            write_error(CONNECT_FAILED, sizeof(CONNECT_FAILED));
-        }
+        p.write_error(CONNECT_FAILED, sizeof(CONNECT_FAILED));
         ret = -1;
         goto exit;
     }
@@ -332,9 +332,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
 
     mbedtls_net_context server_fd = { .fd = sock };
 
-    if (stdio_mode) {
-        write_progress(ESTABLISH_HANDSHAKE, sizeof(ESTABLISH_HANDSHAKE));
-    }
+    p.write_progress(ESTABLISH_HANDSHAKE, sizeof(ESTABLISH_HANDSHAKE));
 
     // Setup tls config
     ret = mbedtls_ssl_config_defaults(
@@ -345,9 +343,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     );
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_config_defaults failed with %d\n", ret);
-        if (stdio_mode) {
-            write_error(INTERNAL_SSL_CONFIG, sizeof(INTERNAL_SSL_CONFIG));
-        }
+        p.write_error(INTERNAL_SSL_CONFIG, sizeof(INTERNAL_SSL_CONFIG));
         goto exit;
     }
 
@@ -361,18 +357,14 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
     ret = mbedtls_ssl_setup(&ssl, &conf);
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_setup failed with %d\n", ret);
-        if (stdio_mode) {
-            write_error(INTERNAL_SSL_SETUP, sizeof(INTERNAL_SSL_SETUP));
-        }
+        p.write_error(INTERNAL_SSL_SETUP, sizeof(INTERNAL_SSL_SETUP));
         goto exit;
     }
     // Set the hostname on ssl
     ret = mbedtls_ssl_set_hostname(&ssl, cinfo->host);
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_set_hostname failed with code %d\n", ret);
-        if (stdio_mode) {
-            write_error(INTERNAL_SSL_HOSTNAME, sizeof(INTERNAL_SSL_HOSTNAME));
-        }
+        p.write_error(INTERNAL_SSL_HOSTNAME, sizeof(INTERNAL_SSL_HOSTNAME));
         goto exit;
     }
     // Apply the ssl to the connection
@@ -386,18 +378,14 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
                 "mbedtls_ssl_handshake failed with %d\n",
                 ret
             );
-            if (stdio_mode) {
-                write_error(HANDSHAKE_FAILED, sizeof(HANDSHAKE_FAILED));
-            }
+            p.write_error(HANDSHAKE_FAILED, sizeof(HANDSHAKE_FAILED));
         }
     }
 
     // Verify the certificate - skipped
 
     // Write the request
-    if (stdio_mode) {
-        write_progress(SEND_REQUEST, sizeof(SEND_REQUEST));
-    }
+    p.write_progress(SEND_REQUEST, sizeof(SEND_REQUEST));
     while (true) {
         ret = mbedtls_ssl_write(&ssl, cinfo->request, cinfo->request_length);
         if (ret > 0 && (size_t)ret == cinfo->request_length) {
@@ -417,18 +405,16 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
             } else {
                 fprintf(stderr, "mbedtls_ssl_write failed with code %d\n", ret);
             }
-            if (stdio_mode) {
-                write_error(REQUEST_FAILED, sizeof(REQUEST_FAILED));
-            }
+            p.write_error(REQUEST_FAILED, sizeof(REQUEST_FAILED));
             goto exit;
         }
     }
 
     // Read the response from server
-    unsigned char buf[4096];
-    char status_buf[] = RESPONSE_PARTIAL " 18446744073709551616";
+    const size_t buf_size = 524288; // Half a megabyte, since stdio limit is a megabyte
+    buf = malloc(buf_size);
     while (true) {
-        ret = mbedtls_ssl_read(&ssl, buf, sizeof(buf));
+        ret = mbedtls_ssl_read(&ssl, buf, buf_size);
 
         if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
             // These two statuses mean we just retry the read
@@ -443,17 +429,10 @@ static int fetch_gemini(struct connect_info * cinfo, struct bytevec * response, 
             break;
         } else if (ret > 0) {
             // ret holds the length read
-            bytevec_append(response, buf, (size_t)ret);
-
-            if (stdio_mode) {
-                size_t s = snprintf(status_buf, sizeof(status_buf), RESPONSE_PARTIAL " %lu", response->length);
-                write_progress(status_buf, s + 1);
-            }
+            p.write_result(buf, ret);
         } else {
             fprintf(stderr, "mbedtls_ssl_read failed with code %d\n", ret);
-            if (stdio_mode) {
-                write_error(RESPONSE_FAILED, sizeof(RESPONSE_FAILED));
-            }
+            p.write_error(RESPONSE_FAILED, sizeof(RESPONSE_FAILED));
             goto exit;
         }
     }
@@ -465,6 +444,9 @@ exit:
     }
     if (sock != -1) {
         close(sock);
+    }
+    if (buf) {
+        free(buf);
     }
     mbedtls_x509_crt_free(&cacert);
     mbedtls_ssl_free(&ssl);
@@ -491,8 +473,11 @@ int main(int argc, const char ** argv) {
 
         // The message is preceded by its length in four bytes
         uint32_t length = 0;
-        fread(&length, sizeof(length), 1, stdin);
-        fflush(stderr);
+        size_t length_read = fread(&length, sizeof(length), 1, stdin);
+        if (length_read != 1) {
+            fprintf(stderr, "error reading data\n");
+            return 1;
+        }
 
         // Maximum gemini url length is 1024
         unsigned char buf[1025];
@@ -536,25 +521,20 @@ int main(int argc, const char ** argv) {
         }
     }
 
-    struct bytevec response = bytevec_empty();
-    int r = fetch_gemini(&c, &response, stdio_mode);
-    free_connect_info(&c);
-
-    if (r == 0) {
-        if (stdio_mode) {
-            struct bytevec encoded = base64_encode(&response);
-            if (encoded.data != NULL) {
-                // Write data as expected by firefox stdio framing
-                uint32_t length = encoded.length; // Be what it may
-                fwrite(&length, sizeof(length), 1, stdout);
-                fwrite(encoded.data, 1, encoded.length, stdout);
-            }
-        } else {
-            fwrite(response.data, 1, response.length, stdout);
-        }
-        fflush(stdout);
+    struct output print = {
+        .write_error = write_null,
+        .write_progress = write_null,
+        .write_result = write_verbatim,
+    };
+    if (stdio_mode) {
+        print.write_error = write_error_json;
+        print.write_progress = write_progress_json;
+        print.write_result = write_result_json;
     }
-    free_bytevec(&response);
+
+    int r = fetch_gemini(&c, print);
+    fflush(stdout);
+    free_connect_info(&c);
 
     return r;
 }

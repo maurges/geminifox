@@ -241,16 +241,17 @@ function parseHeader(bytes) {
 
 /**
  * @param {object} o
- * @returns {HTMLElement}
+ * @param {number} downloadedSize
+ * @returns {{show?: HTMLElement, append?: Uint8Array<ArrayBuffer>}}
  */
-function parseProgress(o) {
+function parseProgress(o, downloadedSize) {
     const unexpected_message = "Fatal error: unexpected message from the native program";
     if (typeof o !== "object") {
         // Malformed message
         console.log("unexpected message type", o);
         const div = document.createElement("div");
         div.innerText = unexpected_message;
-        return div;
+        return {show: div};
     }
 
     if ("error" in o && typeof o.error === "string") {
@@ -278,7 +279,7 @@ function parseProgress(o) {
             console.log("unexpected error", o);
             div.innerText = unexpected_message;
         }
-        return div;
+        return {show: div};
     } else if ("progress" in o && typeof o.progress === "string") {
         /** @type {Record<string, string>}*/
         const statuses = {
@@ -288,32 +289,32 @@ function parseProgress(o) {
             "SEND_REQUEST": "Sending the request...",
         };
         const div = document.createElement("div");
-        if (o.progress.startsWith("RESPONSE_PARTIAL ")) {
-            div.innerText = "Downloaded " + o.progress.slice(17) + " bytes...";
+        const text = statuses[o.progress];
+        if (text) {
+            div.innerText = text;
         } else {
-            const text = statuses[o.progress];
-            if (text) {
-                div.innerText = text;
-            } else {
-                console.log("unexpected progress", o);
-                div.innerText = unexpected_message;
-            }
+            console.log("unexpected progress", o);
+            div.innerText = unexpected_message;
         }
-        return div;
+        return {show: div};
+    } else if ("part" in o && typeof o.part === "string") {
+        try {
+            const resp = Uint8Array.fromBase64(o.part);
+            const div = document.createElement("div");
+            div.innerText = "Downloaded " + (downloadedSize + resp.length).toString() + "bytes";
+            return {show: div, append: resp};
+        } catch (e) {
+            // Malformed message
+            const div = document.createElement("div");
+            div.innerText = unexpected_message;
+            return {show: div};
+        }
     } else {
         // Malformed message
         const div = document.createElement("div");
         div.innerText = unexpected_message;
-        return div;
+        return {show: div};
     }
-}
-
-/**
- * @param {object} message
- */
-function displayProgress(message) {
-    const progress = parseProgress(message);
-    document.body.replaceChildren(progress);
 }
 
 /**
@@ -438,13 +439,11 @@ function displayResponse(code, text, body, currentLocation) {
 }
 
 /**
- * @param {string} responseB64
+ * @param {Uint8Array<ArrayBuffer>} resp
  * @param {string} currentLocation
  * @param {string[]} redirects
  */
-function handleResponse(responseB64, currentLocation, redirects) {
-    const resp = Uint8Array.fromBase64(responseB64);
-
+function handleResponse(resp, currentLocation, redirects) {
     // Find the end of the header by "\r\n"
     let i = 0;
     while (resp[i] != 13 && resp[i+1] != 10 && i < resp.length) {
@@ -532,22 +531,46 @@ function displayError(message) {
 function navigateTo(url, redirects) {
     document.title = url;
 
+    /** @type {Uint8Array<ArrayBuffer>[]} */
+    const responseChunks = [];
+    let responseSize = 0;
+
     /**
      * @param {object} resp
      */
     function responseReceived(resp) {
-        if (typeof resp === "string") {
-            port.disconnect();
-            // Remember the fetched result
-            history.replaceState({geminifox: {resp, url}}, "", "proxy.html?web+" + url);
-            handleResponse(resp, url, redirects);
-        } else {
-            displayProgress(resp);
+        const r = parseProgress(resp, responseSize);
+        if ("show" in r) {
+            document.body.replaceChildren(r.show);
         }
+        if ("append" in r) {
+            responseChunks.push(r.append);
+            responseSize += r.append.length;
+        }
+    }
+
+    function responseFinished() {
+        // Concatenate the chunks (low level language yeah)
+        const fullResponse = new Uint8Array(responseSize);
+        let offset = 0;
+        for (const chunk of responseChunks) {
+            fullResponse.set(chunk, offset);
+            offset += chunk.length;
+        }
+
+        // Remember the fetched result
+        try {
+            history.replaceState({geminifox: {resp: fullResponse, url}}, "", "proxy.html?web+" + url);
+        } catch (e) {
+            console.log("Failed to replace history state", e);
+            history.replaceState(null, "", "proxy.html?web+" + url);
+        }
+        handleResponse(fullResponse, url, redirects);
     }
 
     const port = browser.runtime.connect();
     port.onMessage.addListener(responseReceived);
+    port.onDisconnect.addListener(responseFinished);
 
     const messageArray = (new TextEncoder()).encode(url);
     const messageB64 = messageArray.toBase64();
