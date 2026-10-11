@@ -437,7 +437,7 @@ function displayResponse(code, text, body, currentLocation) {
     // Unknown status
     } else {
         const div = document.createElement("div");
-        div.innerText = "Malformed server reply";
+        div.innerText = "Malformed server reply: unknown status code " + code.toString();
         return {body: div};
     }
 }
@@ -462,7 +462,7 @@ function handleResponse(resp, currentLocation, redirects) {
     const headerRepr = parseHeader(header);
     if (headerRepr === null) {
         const div = document.createElement("div");
-        div.innerText = "Malformed server reply";
+        div.innerText = "Malformed server reply: can't parse header";
         document.body.replaceChildren(div);
         return;
     };
@@ -554,6 +554,11 @@ function navigateTo(url, redirects) {
     }
 
     function responseFinished() {
+        if (responseSize === 0) {
+            // Did not get a response. There must have been an error that we
+            // receive before, don't even attempt to render the (empty) body
+            return;
+        }
         // Concatenate the chunks (low level language yeah)
         const fullResponse = new Uint8Array(responseSize);
         let offset = 0;
