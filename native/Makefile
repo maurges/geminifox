@@ -20,17 +20,17 @@ ifneq ($(RELEASE),)
 endif
 
 
-all: build/gemfox-native build/packet-read build/packet-write
+all: build/geminifox-native build/packet-read build/packet-write
 
-build/gemfox-native: build/main.o $(LIBS)
-	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS) $(CFLAGS)
+build/geminifox-native: build/main.o build/install.o $(LIBS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(FLAGS)
 
 build/packet-write: build/packet-write.o
-	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS) $(CFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(FLAGS) $(CFLAGS)
 build/packet-read: build/packet-read.o
-	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS) $(CFLAGS)
+	$(CC) -o $@ $^ $(LDFLAGS) $(FLAGS) $(CFLAGS)
 
-build/%.o: src/%.c | build
+build/%.o: src/%.c src/*.h | build
 	$(CC) -c -o $@ $< $(CFLAGS) $(FLAGS) $(INCLUDES)
 
 

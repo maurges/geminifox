@@ -1,4 +1,5 @@
-#define _POSIX_C_SOURCE 200112L
+#define _POSIX_C_SOURCE 200809L
+#define _DARWIN_C_SOURCE
 
 #include <netdb.h>
 #include <stdint.h>
@@ -14,6 +15,8 @@
 #include "mbedtls/entropy.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
+
+#include "install.h"
 
 
 struct bytevec {
@@ -465,6 +468,13 @@ int main(int argc, const char ** argv) {
 
     // firefox gives the path to the manifest and the path to the script. I don't care
     bool stdio_mode = argc == 1 || argc == 3;
+
+    // XXX
+    if (argc >= 1 && strcmp(argv[1], "--install") == 0) {
+        interactive_install(argv[0], false);
+
+        return 0;
+    }
 
     struct connect_info c;
 
