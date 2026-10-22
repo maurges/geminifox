@@ -254,6 +254,7 @@ function parseProgress(o, downloadedSize) {
         // Malformed message
         console.log("unexpected message type", o);
         const div = document.createElement("div");
+        div.classList.add("error");
         div.innerText = unexpected_message;
         return {show: div};
     }
@@ -276,6 +277,7 @@ function parseProgress(o, downloadedSize) {
             "RESPONSE_FAILED": "Server didn't provide the response",
         };
         const div = document.createElement("div");
+        div.classList.add("error");
         const text = errors[o.error];
         if (text) {
             div.innerText = text;
@@ -293,6 +295,7 @@ function parseProgress(o, downloadedSize) {
             "SEND_REQUEST": "Sending the request...",
         };
         const div = document.createElement("div");
+        div.classList.add("progress");
         const text = statuses[o.progress];
         if (text) {
             div.innerText = text;
@@ -305,17 +308,20 @@ function parseProgress(o, downloadedSize) {
         try {
             const resp = Uint8Array.fromBase64(o.part);
             const div = document.createElement("div");
+            div.classList.add("progress");
             div.innerText = "Downloaded " + (downloadedSize + resp.length).toString() + "bytes";
             return {show: div, append: resp};
         } catch (e) {
             // Malformed message
             const div = document.createElement("div");
+            div.classList.add("error");
             div.innerText = unexpected_message;
             return {show: div};
         }
     } else {
         // Malformed message
         const div = document.createElement("div");
+        div.classList.add("error");
         div.innerText = unexpected_message;
         return {show: div};
     }

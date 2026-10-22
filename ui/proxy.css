@@ -1,16 +1,88 @@
+* {
+    /* Remove default margin */
+    margin: 0;
+    /* Width calculation includes padding and border */
+    box-sizing: border-box;
+}
+
+body {
+    /* Pad the article a bit */
+    padding: 5px;
+}
+
+article {
+    width: 900px;
+    /* Shrink to fit narrow windows instead of overflowing */
+    max-width: 100%;
+    /* top-bottom : left-right */
+    margin: 0 auto;
+}
+
+h1 {
+    /* Default is 2em, a bit larger */
+    font-size: 2.5em;
+    /* Text is centered */
+    text-align: center;
+    /* Light gray line under the title, spanning the article width */
+    border-bottom: 1px solid lightgray;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    margin-top: 0.25em;
+    margin-bottom: 0.25em;
+}
+
+
 /* Display links horizontally in a group */
 .link-group {
     display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1rem;
-    margin: 1rem 0;
 
     /* But if there are more than 5, display as a column */
     &:has(> :nth-child(6)) {
         flex-direction: column;
+
+        /* Prefix every link with an arrow */
+        > a::before {
+            /* "⇒" written as an escape so it survives any file encoding */
+            content: "\21D2";
+            /* Gap between the arrow and the link text */
+            margin-right: 0.25em;
+        }
     }
 
+    /* Can wrap the row on multiple lines */
+    flex-wrap: wrap;
+    /* cols : rows */
+    gap: 0.5rem 1rem;
+    /* top-bottom : left-right */
+    margin: 1rem 0;
+
     > a {
+        /* Prevent text from going multiline */
         white-space: nowrap;
     }
+}
+
+/* Status box on the error and progress pages */
+.error, .progress {
+    /* Fixed to the viewport so it can be centered in it */
+    position: fixed;
+    /* Stretch the positioning area over the whole viewport */
+    inset: 0;
+    /* Venter in the viewport */
+    margin: auto;
+
+    width: 600px;
+    height: 500px;
+    max-width: 100%;
+    max-height: 100%;
+
+    /* Flex so the text positioned can be controlled */
+    display: flex;
+    align-items: flex-start;
+    /* Small offset for the text*/
+    padding: 0.5em;
+
+    font-size: 1.2em;
+    font-family: sans-serif;
 }
