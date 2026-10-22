@@ -448,6 +448,50 @@ function displayResponse(code, text, body, currentLocation) {
     }
 }
 
+/** Compute the width of the element if it were rendered with "internal--measure" class
+ * @param {HTMLElement} elem
+ * @returns {number}
+ */
+function elementRenderedWidth(elem) {
+    // Cache the computed width directly on the element, as the elements are static
+    if (elem.dataset["renderedWidth"] === undefined) {
+        elem.classList.add("internal--measure");
+        const r = elem.getBoundingClientRect().width;
+        elem.dataset["renderedWidth"] = r.toString();
+        elem.classList.remove("internal--measure");
+        return r;
+    } else {
+        const r = parseInt(elem.dataset["renderedWidth"]);
+        if (Number.isNaN(r)) {
+            panic("Stored 'renderedWidth' is not a number");
+        }
+        return r;
+    }
+}
+
+// Will be set on the article after its render into html, and be triggered on
+// resizes of the window
+const widthObserver = new ResizeObserver(evs => {
+    for (const ev of evs) {
+        const article = /** @type HTMLElement */ (ev.target);
+        const linkGroups = article.getElementsByClassName("link-group");
+        // Tsc doesn't allow me to iterate with the for-of syntax?
+        for (let i = 0; i < linkGroups.length; ++i) {
+            // Being a bit sloppy here with the types. As if there is something
+            // other than html elements. This also discards an undefined which
+            // I'm pretty sure can't be in the middle of a queried list
+            const linkGroup = /** @type HTMLElement */ (linkGroups[i]);
+            // Set to vertical if the horizontal width is larger than available
+            const renderedWidth = elementRenderedWidth(linkGroup);
+            linkGroup.classList.toggle(
+                "vertical",
+                // Add the body padding, as it seems to not be taken into account
+                renderedWidth + 10 > article.clientWidth
+            )
+        }
+    }
+});
+
 /**
  * @param {Uint8Array<ArrayBuffer>} resp
  * @param {string} currentLocation
@@ -522,6 +566,7 @@ function handleResponse(resp, currentLocation, redirects) {
     // No redirects, render the page
     } else {
         document.body.replaceChildren(rendered.body);
+        widthObserver.observe(rendered.body);
     }
 }
 

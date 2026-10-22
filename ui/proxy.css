@@ -19,8 +19,8 @@ article {
 }
 
 h1 {
-    /* Default is 2em, a bit larger */
-    font-size: 2.5em;
+    /* Default is 32px, do a bit larger */
+    font-size: 40px;
     /* Text is centered */
     text-align: center;
     /* Light gray line under the title, spanning the article width */
@@ -28,8 +28,8 @@ h1 {
 }
 
 h1, h2, h3, h4, h5, h6 {
-    margin-top: 0.25em;
-    margin-bottom: 0.25em;
+    margin-top: 5px;
+    margin-bottom: 5px;
 }
 
 
@@ -37,8 +37,14 @@ h1, h2, h3, h4, h5, h6 {
 .link-group {
     display: flex;
 
-    /* But if there are more than 5, display as a column */
-    &:has(> :nth-child(6)) {
+    /* Set by the script the measure the content width */
+    &.internal--measure {
+        flex-wrap: nowrap;
+        width: max-content;
+    }
+
+    /* If the content doesn't fit the width, this class is set by the script */
+    &.vertical {
         flex-direction: column;
 
         /* Prefix every link with an arrow */
@@ -46,16 +52,16 @@ h1, h2, h3, h4, h5, h6 {
             /* "⇒" written as an escape so it survives any file encoding */
             content: "\21D2";
             /* Gap between the arrow and the link text */
-            margin-right: 0.25em;
+            margin-right: 5px;
         }
     }
 
     /* Can wrap the row on multiple lines */
     flex-wrap: wrap;
     /* cols : rows */
-    gap: 0.5rem 1rem;
+    gap: 8px 16px;
     /* top-bottom : left-right */
-    margin: 1rem 0;
+    margin: 16px 0;
 
     > a {
         /* Prevent text from going multiline */
@@ -81,8 +87,8 @@ h1, h2, h3, h4, h5, h6 {
     display: flex;
     align-items: flex-start;
     /* Small offset for the text*/
-    padding: 0.5em;
+    padding: 8px;
 
-    font-size: 1.2em;
+    font-size: 20px;
     font-family: sans-serif;
 }
