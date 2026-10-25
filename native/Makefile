@@ -22,7 +22,7 @@ endif
 
 all: build/gemfox-native build/packet-read build/packet-write
 
-build/gemfox-native: build/main.o vendor/mbedtls/library/libmbedtls.a
+build/gemfox-native: build/main.o $(LIBS)
 	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS)
 
 build/packet-write: build/packet-write.o
@@ -34,8 +34,9 @@ build/%.o: src/%.c | build
 	$(CC) -c -o $@ $< $(CFLAGS) $(FLAGS) $(INCLUDES)
 
 
-vendor/mbedtls/library/libmbedtls.a: mbedtls_config/mbedtls/mbedtls_config.h
-	make -C vendor/mbedtls/ no_test # TODO config
+vendor/mbedtls/%.a: mbedtls_config/mbedtls/mbedtls_config.h
+	$(MAKE) -C $(@D) $(@F) # TODO config
+#vendor/mbedtls/library/libmbedtls.a: mbedtls_config/mbedtls/mbedtls_config.h
 
 build:
 	mkdir -p build
