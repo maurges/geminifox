@@ -23,12 +23,12 @@ endif
 all: build/gemfox-native build/packet-read build/packet-write
 
 build/gemfox-native: build/main.o $(LIBS)
-	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS)
+	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS) $(CFLAGS)
 
 build/packet-write: build/packet-write.o
-	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS)
+	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS) $(CFLAGS)
 build/packet-read: build/packet-read.o
-	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS)
+	$(CC) -o $@ $< $(LIBS) $(LDFLAGS) $(FLAGS) $(CFLAGS)
 
 build/%.o: src/%.c | build
 	$(CC) -c -o $@ $< $(CFLAGS) $(FLAGS) $(INCLUDES)
