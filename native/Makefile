@@ -22,7 +22,11 @@ endif
 
 all: build/geminifox-native build/packet-read build/packet-write
 
-build/geminifox-native: build/main.o build/install.o $(LIBS)
+SOURCES = \
+  build/main.o \
+  build/install.o \
+  build/utils.o
+build/geminifox-native: $(SOURCES) $(LIBS)
 	$(CC) -o $@ $^ $(LDFLAGS) $(FLAGS)
 
 build/packet-write: build/packet-write.o

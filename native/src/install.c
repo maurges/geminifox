@@ -8,9 +8,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
-#include <stdarg.h>
-#include <stdio.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -21,31 +20,7 @@
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
-struct str {
-    union {
-        char * val;
-        const char * cval;
-    };
-    size_t len;
-};
-#define S(s) {.val = s, .len = sizeof(s) - 1}
-#define CS(s) {.cval = s, .len = sizeof(s) - 1}
-#define NULLSTR {.val = NULL, .len = 0}
-
-static size_t concat(char * dst, size_t argc, ...) {
-    va_list args;
-    va_start(args, argc);
-    size_t offset = 0;
-    for (size_t i = 0; i < argc; ++i) {
-        const char * buf = va_arg(args, const char *);
-        size_t len = va_arg(args, size_t);
-        memcpy(dst + offset, buf, len);
-        offset += len;
-    }
-    va_end(args);
-    dst[offset] = 0;
-    return offset;
-}
+#include "utils.h"
 
 // Returns:
 // 0 if exists and is writable by user
@@ -140,8 +115,7 @@ static struct str find_manifest_location(const char * home, size_t home_len) {
             loc_hosts, sizeof(loc_hosts) - 1
         );
         if (is_writable(manifest_location) == 0) {
-            struct str ret = { .val = manifest_location, .len = len };
-            return ret;
+            return str_of_parts(manifest_location, len);
         }
     }
 
@@ -176,14 +150,12 @@ static struct str find_manifest_location(const char * home, size_t home_len) {
         goto errexit;
     }
 
-    struct str ret = { .val = manifest_location, .len = len };
-    return ret;
+    return str_of_parts(manifest_location, len);
 
 errexit:
     fprintf(stderr, "Can't find location for manifest\n");
     if (manifest_location) { free(manifest_location); }
-    struct str errret = { .val = NULL, .len = 0 };
-    return errret;
+    return nullstr();
 }
 
 static struct str find_bin_location(const char * home, size_t home_len) {
@@ -201,11 +173,7 @@ static struct str find_bin_location(const char * home, size_t home_len) {
             usr_local_bin, sizeof(usr_local_bin) - 1,
             bin_name, sizeof(bin_name)
         );
-        struct str ret = {
-            .val = bin_location,
-            .len = len,
-        };
-        return ret;
+        return str_of_parts(bin_location, len);
     }
 
     // Try in home
@@ -217,27 +185,24 @@ static struct str find_bin_location(const char * home, size_t home_len) {
     memcpy(bin_location + home_len, local_bin, sizeof(local_bin)); // with \0
     if (is_writable(bin_location) == 0) {
         memcpy(bin_location + home_len + sizeof(local_bin) - 1, bin_name, sizeof(bin_name));
-        struct str ret = {
-            .val = bin_location,
-            .len = home_len + sizeof(local_bin) - 1 + sizeof(bin_name) - 1,
-        };
-        return ret;
+        return str_of_parts(
+            bin_location,
+            home_len + sizeof(local_bin) - 1 + sizeof(bin_name) - 1
+        );
     }
     // Try /bin
     memcpy(bin_location + home_len, bin, sizeof(bin)); // with \0
     if (is_writable(bin_location) == 0) {
         memcpy(bin_location + home_len + sizeof(bin) - 1, bin_name, sizeof(bin_name));
-        struct str ret = {
-            .val = bin_location,
-            .len = home_len + sizeof(bin) - 1 + sizeof(bin_name) - 1,
-        };
-        return ret;
+        return str_of_parts(
+            bin_location,
+            home_len + sizeof(bin) - 1 + sizeof(bin_name) - 1
+        );
     }
 
     fprintf(stderr, "Can't find location for binaries\n");
     free(bin_location);
-    struct str errret = NULLSTR;
-    return errret;
+    return nullstr();
 }
 
 static int install_self_to(const char * to, const char * from) {
@@ -321,8 +286,8 @@ exit:
 int interactive_install(const char * self_path, bool dry_run) {
     int ret = -1;
 
-    struct str manifest_location = NULLSTR;
-    struct str binary_location = NULLSTR;
+    struct str manifest_location = nullstr();
+    struct str binary_location = nullstr();
 
     fprintf(stderr, "Gathering install information...\n");
     const char * home = getenv("HOME");

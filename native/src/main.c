@@ -17,80 +17,12 @@
 #include "mbedtls/ssl.h"
 
 #include "install.h"
+#include "utils.h"
 
 
-struct bytevec {
-    unsigned char * data;
-    size_t length;
-    size_t capacity;
-};
-
-struct bytevec bytevec_empty() {
-    struct bytevec r = {
-        .data = NULL,
-        .length = 0,
-        .capacity = 0,
-    };
-    return r;
-}
-
-#if 0
-static void bytevec_append(struct bytevec * vec, unsigned char * buf, size_t length) {
-    if (vec->data == NULL) {
-        vec->capacity = 256;
-        while (vec->capacity < length) {
-            vec->capacity *= 2;
-        }
-        vec->data = malloc(vec->capacity);
-    } else if (vec->length + length >= vec->capacity) {
-        // realloc
-        while (vec->capacity < vec->length + length) {
-            vec->capacity *= 2;
-        }
-        unsigned char * data = malloc(vec->capacity);
-
-        memcpy(data, vec->data, vec->length);
-        free(vec->data);
-        vec->data = data;
-    }
-    memcpy(vec->data + vec->length, buf, length);
-    vec->length += length;
-}
+#ifndef VERSION
+# define VERSION "0.0.1"
 #endif
-
-static void free_bytevec(struct bytevec * vec) {
-    if (vec->data) {
-        free(vec->data);
-    }
-    vec->data = NULL;
-    vec->length = 0;
-    vec->capacity = 0;
-}
-
-struct bytevec base64_encode(const unsigned char * data, size_t length) {
-    size_t out_length = 0;
-
-    int r = mbedtls_base64_encode(NULL, 0, &out_length, data, length);
-    if (r != MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL) {
-        fprintf(stderr, "base64 encode failed with %d\n", r);
-        return bytevec_empty();
-    }
-    struct bytevec encoded = {
-        .data = malloc(out_length),
-        .length = out_length,
-        .capacity = out_length,
-    };
-    r = mbedtls_base64_encode(encoded.data, out_length, &out_length, data, length);
-
-    if (r != 0) {
-        fprintf(stderr, "base64 encode failed with %d\n", r);
-        free_bytevec(&encoded);
-    }
-    // Some fucking times the encoded length is less than queried, so update it
-    encoded.length = out_length;
-
-    return encoded;
-}
 
 
 ///// Error and progress values /////
@@ -119,28 +51,31 @@ struct output {
 };
 
 
-#define WRITE_JSON_BODY(field) \
-    const char prefix[] = "{\"" field "\":\""; \
-    const char suffix[] = "\"}"; \
-    uint32_t length = sizeof(prefix) - 1 + length_ll - 1 + sizeof(suffix) - 1; \
-    fwrite(&length, sizeof(length), 1, stdout); \
-    fwrite(prefix, 1, sizeof(prefix) - 1, stdout); \
-    fwrite(message, 1, length_ll - 1, stdout); \
-    fwrite(suffix, 1, sizeof(suffix) - 1, stdout); \
-    fflush(stdout)
+static void write_json_body(const char * field, size_t field_len, const char * message, size_t message_len) {
+    const char prefix[] = "{\"version\":\"" VERSION "\",\"";
+    const char infix[] = "\":\"";
+    const char suffix[] = "\"}";
+    uint32_t length = sizeof(prefix) - 1 + field_len + sizeof(infix) - 1 + message_len + sizeof(suffix) - 1;
+    fwrite(&length, sizeof(length), 1, stdout);
+    fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
+    fwrite(field, 1, field_len, stdout);
+    fwrite(infix, 1, sizeof(infix) - 1, stdout);
+    fwrite(message, 1, message_len, stdout);
+    fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
+}
 /// length_ll includes the null terminator for convenience
 static void write_progress_json(const char * message, size_t length_ll) {
-    WRITE_JSON_BODY("progress");
+    const char field[] = "progress";
+    write_json_body(field, sizeof(field) - 1, message, length_ll - 1);
 }
 static void write_error_json(const char * message, size_t length_ll) {
-    WRITE_JSON_BODY("error");
+    const char field[] = "error";
+    write_json_body(field, sizeof(field) - 1, message, length_ll - 1);
 }
 static void write_result_json(const unsigned char * message_raw, size_t length_raw) {
     struct bytevec r = base64_encode(message_raw, length_raw);
-    // Strip the framing quotes
-    const char * message = (char *)r.data;
-    size_t length_ll = r.length + 1; // because it subtracts 1 in macro
-    WRITE_JSON_BODY("part");
+    const char field[] = "part";
+    write_json_body(field, sizeof(field) - 1, (const char *)r.data, r.length);
 }
 
 static void write_null(const char *, size_t) {}
@@ -156,21 +91,6 @@ struct connect_info {
     unsigned char * request; // Not null terminated
     size_t request_length;
 };
-
-/// Response from a gemini server
-struct response {
-    const char * header;
-    const char * body;
-};
-
-
-/// Clone a string slice to a newly allocated string, and null-terminates it
-static char * strclone(const char * source, size_t length) {
-    char * out = malloc(length + 1);
-    memcpy(out, source, length);
-    out[length] = '\0';
-    return out;
-}
 
 static int parse_url(const char * url, struct connect_info * out) {
     out->host = NULL;
@@ -461,13 +381,12 @@ exit:
 }
 
 int main(int argc, const char ** argv) {
+    int ret = -1;
+
     if (argc > 3) {
         fprintf(stderr, "Usage: %s REQ\nOr run with 0 or 2 arguments for stdio mode\n", argv[0]);
         return 1;
     }
-
-    // firefox gives the path to the manifest and the path to the script. I don't care
-    bool stdio_mode = argc == 1 || argc == 3;
 
     // XXX
     if (argc >= 1 && strcmp(argv[1], "--install") == 0) {
@@ -476,8 +395,10 @@ int main(int argc, const char ** argv) {
         return 0;
     }
 
-    struct connect_info c;
+    // firefox gives the path to the manifest and the path to the script. I don't care
+    bool stdio_mode = argc == 1 || argc == 3;
 
+    const char * command = NULL;
     if (stdio_mode) {
         fprintf(stderr, "stdio mode, awaiting command\n");
 
@@ -489,7 +410,6 @@ int main(int argc, const char ** argv) {
             return 1;
         }
 
-        // Maximum gemini url length is 1024
         unsigned char buf[1025];
         unsigned char buf_b64_[1500];
         unsigned char * buf_b64 = buf_b64_; // Because we want to mutate the pointer later
@@ -518,33 +438,51 @@ int main(int argc, const char ** argv) {
             return err;
         }
 
-        err = parse_url((char *)buf, &c);
-        if (err != 0) {
-            fprintf(stderr, "failed to parse url\n");
-            return err;
-        }
+        command = (const char *)buf;
     } else {
-        int r = parse_url(argv[1], &c);
-        if (r != 0) {
-            fprintf(stderr, "failed to parse\n");
-            return r;
+        command = argv[1];
+    }
+
+    size_t action_length = 0;
+    const char * arg = NULL;
+    for (; command[action_length] != '\0'; ++action_length) {
+        if (command[action_length] == ' ') {
+            arg = &command[action_length+1];
+            break;
         }
     }
 
-    struct output print = {
-        .write_error = write_null,
-        .write_progress = write_null,
-        .write_result = write_verbatim,
-    };
-    if (stdio_mode) {
-        print.write_error = write_error_json;
-        print.write_progress = write_progress_json;
-        print.write_result = write_result_json;
+    if (matches_literal("fetch", command, action_length)) {
+        struct connect_info c;
+        ret = parse_url(arg, &c);
+        if (ret != 0) {
+            fprintf(stderr, "Failed to parse url\n");
+            free_connect_info(&c);
+            return ret;
+        }
+
+        struct output print = {
+            .write_error = write_null,
+            .write_progress = write_null,
+            .write_result = write_verbatim,
+        };
+        if (stdio_mode) {
+            print.write_error = write_error_json;
+            print.write_progress = write_progress_json;
+            print.write_result = write_result_json;
+        }
+
+        ret = fetch_gemini(&c, print);
+        free_connect_info(&c);
+
+    } else if (matches_literal("version", command, action_length)) {
+        const char field[] = "lazy impl";
+        const char message[] = "";
+        write_json_body(field, sizeof(field) - 1, message, 0);
+
+    } else {
+        fprintf(stderr, "Unknown command at %s\n", command);
     }
 
-    int r = fetch_gemini(&c, print);
-    fflush(stdout);
-    free_connect_info(&c);
-
-    return r;
+    return ret;
 }
