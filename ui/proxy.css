@@ -36,11 +36,20 @@ h1, h2, h3, h4, h5, h6 {
 /* Display links horizontally in a group */
 .link-group {
     display: flex;
+    /* Prevent text misalignment */
+    align-items: baseline;
 
     /* Set by the script the measure the content width */
     &.internal--measure {
         flex-wrap: nowrap;
         width: max-content;
+        /* Can wrap the row on multiple lines */
+        flex-wrap: wrap;
+
+        > a {
+            /* Prevent text from going multiline */
+            white-space: nowrap;
+        }
     }
 
     /* If the content doesn't fit the width, this class is set by the script */
@@ -56,17 +65,10 @@ h1, h2, h3, h4, h5, h6 {
         }
     }
 
-    /* Can wrap the row on multiple lines */
-    flex-wrap: wrap;
     /* cols : rows */
     gap: 8px 16px;
     /* top-bottom : left-right */
     margin: 16px 0;
-
-    > a {
-        /* Prevent text from going multiline */
-        white-space: nowrap;
-    }
 }
 
 /* Status box on the error and progress pages */
