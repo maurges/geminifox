@@ -85,10 +85,29 @@ h1, h2, h3, h4, h5, h6 {
 
     /* Flex so the text positioned can be controlled */
     display: flex;
+    flex-direction: column;
     align-items: flex-start;
     /* Small offset for the text*/
     padding: 8px;
+    gap: 30px;
 
     font-size: 20px;
     font-family: sans-serif;
+
+    > div {
+        /* Slightly smaller than parent */
+        font-size: 15px;
+
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+
+        > button {
+            max-width: 120px;
+            /* Align to the right */
+            align-self: flex-end;
+            /* A bit of gap to not float in the space */
+            margin-right: 50px;
+        }
+    }
 }

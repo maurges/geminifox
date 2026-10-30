@@ -260,27 +260,55 @@ function parseProgress(o, downloadedSize) {
     }
 
     if ("error" in o && typeof o.error === "string") {
-        /** @type {Record<string, string>}*/
+        /** @type {Record<string, { text: string, hint?: HTMLElement }>}*/
         const errors = {
-            "INTERNAL_INIT": "Internal error: initialization failed",
-            "INTERNAL_SSL_CONFIG": "Internal error: SSL configuration failed",
-            "INTERNAL_SSL_SETUP": "Internal error: SSL setup failed",
-            "INTERNAL_SSL_HOSTNAME": "Internal error: SSL hostname binding failed",
+            "INTERNAL_INIT": {text: "Internal error: initialization failed"},
+            "INTERNAL_SSL_CONFIG": {text: "Internal error: SSL configuration failed"},
+            "INTERNAL_SSL_SETUP": {text: "Internal error: SSL setup failed"},
+            "INTERNAL_SSL_HOSTNAME": {text: "Internal error: SSL hostname binding failed"},
 
-            "NATIVE_FAILED": "Failed to run the native program",
+            "NATIVE_FAILED": {
+                text: "Failed to run the native program",
+                hint: (() => {
+                    const div = document.createElement("div");
 
-            "NETWORK_FAILED": "Network unreachable",
-            "LOOKUP_FAILED": "DNS record for the server returned empty",
-            "CONNECT_FAILED": "Failed to connect to the server",
-            "HANDSHAKE_FAILED": "TLS negotiation with the server failed",
-            "REQUEST_FAILED": "Server didn't accept the request",
-            "RESPONSE_FAILED": "Server didn't provide the response",
+                    const inst = document.createElement("p");
+                    const instLink = document.createElement("a");
+                    instLink.href = "https://github.com/maurges/geminifox";
+                    instLink.innerText = instLink.href;
+                    inst.append(
+                        "Did you forget to install the native program? Download it here: ",
+                        instLink,
+                    );
+
+                    const retry = document.createElement("p");
+                    retry.innerText =
+                        "If you're on macos, this failure can randomly happen 1 in 5 loads."
+                        + "Please refresh the page";
+                    const retryButton = document.createElement("button");
+                    retryButton.innerText = "Reload";
+                    retryButton.onclick = () => window.location.reload();
+
+                    div.append(inst, retry, retryButton);
+                    return div;
+                })(),
+            },
+
+            "NETWORK_FAILED": {text: "Network unreachable"},
+            "LOOKUP_FAILED": {text: "DNS record for the server returned empty"},
+            "CONNECT_FAILED": {text: "Failed to connect to the server"},
+            "HANDSHAKE_FAILED": {text: "TLS negotiation with the server failed"},
+            "REQUEST_FAILED": {text: "Server didn't accept the request"},
+            "RESPONSE_FAILED": {text: "Server didn't provide the response"},
         };
         const div = document.createElement("div");
         div.classList.add("error");
-        const text = errors[o.error];
-        if (text) {
-            div.innerText = text;
+        const msg = errors[o.error];
+        if (msg) {
+            div.innerText = msg.text;
+            if (msg.hint) {
+                div.appendChild(msg.hint);
+            }
         } else {
             console.log("unexpected error", o);
             div.innerText = unexpected_message;
@@ -632,7 +660,8 @@ function navigateTo(url, redirects) {
     port.onMessage.addListener(responseReceived);
     port.onDisconnect.addListener(responseFinished);
 
-    const messageArray = (new TextEncoder()).encode(url);
+    const command = "fetch " + url;
+    const messageArray = (new TextEncoder()).encode(command);
     const messageB64 = messageArray.toBase64();
     port.postMessage(messageB64);
 }

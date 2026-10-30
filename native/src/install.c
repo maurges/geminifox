@@ -264,7 +264,7 @@ static int install_manifest_to(const char * to, const char * installed_bin_name,
         CS("\"\n}"),
     };
 
-    dst_fd = open(to, O_WRONLY | O_CREAT | O_TRUNC);
+    dst_fd = open(to, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (dst_fd < 0) {
         fprintf(stderr, "Failed to open %s for writing\n", to);
         goto exit;

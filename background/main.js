@@ -13,14 +13,14 @@ function messageToNative(message, pagePort) {
     let didRespond = false;
     natport.onDisconnect.addListener(p => {
         if (!didRespond) {
-            console.log("Disconnected with error", p.error);
-            pagePort.postMessage({"error": "NATIVE_FAILED"})
+            console.log("Disconnected with error", p.error, p);
+            pagePort.postMessage({"error": "NATIVE_FAILED", "details": p.error})
         }
         pagePort.disconnect();
     });
     if (natport.error) {
         console.log("Error connecting", natport.error);
-        pagePort.postMessage({"error": "NATIVE_FAILED"})
+        pagePort.postMessage({"error": "NATIVE_FAILED", "details": natport.error})
         pagePort.disconnect();
     };
 
