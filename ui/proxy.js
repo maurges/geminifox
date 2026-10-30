@@ -693,7 +693,7 @@ if (wasReload) {
     const oldState = history.state.geminifox;
     if (
         "resp" in oldState
-        && typeof oldState.resp === "string"
+        && oldState.resp instanceof Uint8Array
         && "url" in oldState
         && typeof oldState.url === "string"
     ) {
