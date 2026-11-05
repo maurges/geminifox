@@ -276,6 +276,8 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
     mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
     mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
 
+    // mbedtls_ssl_conf_own_cert() // for mtls
+
     // Apply the config to to the ssl struct
     ret = mbedtls_ssl_setup(&ssl, &conf);
     if (ret != 0) {
@@ -380,6 +382,145 @@ exit:
     return ret;
 }
 
+static int make_certificate(FILE * cert_out, FILE * key_out) {
+    int ret = -1;
+
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_pk_context key;
+    const mbedtls_pk_info_t * pk_info;
+    mbedtls_x509write_cert cert;
+    mbedtls_mpi serial;
+
+    mbedtls_entropy_init(&entropy);
+    mbedtls_ctr_drbg_init(&ctr_drbg);
+    mbedtls_pk_init(&key);
+    mbedtls_x509write_crt_init(&cert);
+    mbedtls_mpi_init(&serial);
+
+    // Generate the key
+
+    const char pers[] = "ecdsa-p256-pk";
+    ret = mbedtls_ctr_drbg_seed(
+        &ctr_drbg,
+        mbedtls_entropy_func,
+        &entropy,
+        (const unsigned char *) pers,
+        sizeof(pers)
+    );
+    if (ret != 0) {
+        fprintf(stderr, "Failed to init randomness\n");
+        goto exit;
+    }
+
+    pk_info = mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY);
+    ret = mbedtls_pk_setup(&key, pk_info);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to setup ecdsa key\n");
+        goto exit;
+    }
+    ret = mbedtls_ecp_gen_key(
+        MBEDTLS_ECP_DP_SECP256R1,
+        mbedtls_pk_ec(key),
+        mbedtls_ctr_drbg_random,
+        &ctr_drbg
+    );
+
+    // Create the certificate
+
+    mbedtls_x509write_crt_set_version(&cert, MBEDTLS_X509_CRT_VERSION_3);
+    mbedtls_x509write_crt_set_md_alg(&cert, MBEDTLS_MD_SHA256);
+    ret = mbedtls_mpi_read_string(&serial, 10, "1");
+    if (ret != 0) {
+        fprintf(stderr, "Failed to read static MPI\n");
+        goto exit;
+    }
+    ret = mbedtls_x509write_crt_set_serial_raw(&cert, (unsigned char *)"\x01", 1);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to set static serial\n");
+        goto exit;
+    }
+
+    // Set validity to a year from now
+    time_t now = time(NULL);
+    time_t expires = now + 365 * 24 * 60 * 60;
+    struct tm tm_buf;
+    gmtime_r(&now, &tm_buf);
+    char not_before[15];
+    strftime(not_before, sizeof(not_before), "%Y%m%d%H%M%S", &tm_buf);
+    char not_after[15];
+    gmtime_r(&expires, &tm_buf);
+    strftime(not_after, sizeof(not_after), "%Y%m%d%H%M%S", &tm_buf);
+    ret = mbedtls_x509write_crt_set_validity(&cert, not_before, not_after);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to set cert validity\n");
+        goto exit;
+    }
+
+    const char dn[] = "CN=geminifox";
+    ret = mbedtls_x509write_crt_set_subject_name(&cert, dn);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to set cert dn for subject\n");
+        goto exit;
+    }
+    ret = mbedtls_x509write_crt_set_issuer_name(&cert, dn);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to set cert dn for issuer\n");
+        goto exit;
+    }
+
+    mbedtls_x509write_crt_set_subject_key(&cert, &key);
+    mbedtls_x509write_crt_set_issuer_key(&cert, &key);
+    ret = mbedtls_x509write_crt_set_basic_constraints(&cert, /* is_ca */ false, -1);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to set basic constraints\n");
+        goto exit;
+    }
+
+    // A normal certificate is 1500 bytes, allocate с горкой
+    unsigned char pem_bytes[4096] = {};
+    ret = mbedtls_x509write_crt_pem(
+        &cert,
+        pem_bytes,
+        sizeof(pem_bytes),
+        mbedtls_ctr_drbg_random,
+        &ctr_drbg
+    );
+    if (ret != 0) {
+        fprintf(stderr, "Failed to create certificate bytes\n");
+        goto exit;
+    }
+    size_t pem_bytes_len = strlen((char *)pem_bytes);
+
+    ret = write_all(fileno(cert_out), (char *)pem_bytes, pem_bytes_len);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to write cert bytes to file\n");
+        goto exit;
+    }
+
+    ret = mbedtls_pk_write_key_pem(&key, pem_bytes, sizeof(pem_bytes));
+    if (ret != 0) {
+        fprintf(stderr, "Failed to create key bytes\n");
+        goto exit;
+    }
+    pem_bytes_len = strlen((char *)pem_bytes);
+
+    ret = write_all(fileno(key_out), (char *)pem_bytes, pem_bytes_len);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to write key bytes to file\n");
+        goto exit;
+    }
+
+    ret = 0;
+exit:
+    mbedtls_mpi_free(&serial);
+    mbedtls_x509write_crt_free(&cert);
+    mbedtls_pk_free(&key);
+    mbedtls_ctr_drbg_free(&ctr_drbg);
+    mbedtls_entropy_free(&entropy);
+    return ret;
+}
+
 int main(int argc, const char ** argv) {
     int ret = -1;
 
@@ -474,6 +615,27 @@ int main(int argc, const char ** argv) {
 
         ret = fetch_gemini(&c, print);
         free_connect_info(&c);
+
+    } else if (matches_literal("keygen", command, action_length)) {
+        // Open arg.pem and arg.key.pem
+        size_t len = strlen(arg);
+        char * out_name = malloc(len + 9);
+        concat(out_name, 2, arg, len, ".pem", 4);
+        FILE * cert_out = fopen(out_name, "w");
+        concat(out_name, 2, arg, len, ".key.pem", 8);
+        FILE * key_out = fopen(out_name, "w");
+        if (cert_out == NULL || key_out == NULL) {
+            fprintf(stderr, "Failed to open %s for writing\n", arg);
+            return -1;
+        }
+
+        int r = make_certificate(cert_out, key_out);
+        if (r != 0) {
+            fprintf(stderr, "Failed to make certificate\n");
+            return -1;
+        }
+        fclose(cert_out);
+        fclose(key_out);
 
     } else if (matches_literal("version", command, action_length)) {
         const char field[] = "lazy impl";

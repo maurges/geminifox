@@ -49,23 +49,6 @@ static int is_writable(const char * dir) {
     return 0;
 }
 
-static int write_all(int fd, const char * buf, size_t size) {
-    size_t retry_from = 0;
-    while (retry_from < size) {
-        size_t bytes_written = write(fd, buf + retry_from, size - retry_from);
-        if (bytes_written <= 0) {
-            if (errno == EINTR) {
-                // Apparently that just happens sometimes
-                continue;
-            } else {
-                return -1;
-            }
-        }
-        retry_from += bytes_written;
-    }
-    return 0;
-}
-
 
 static const char manifest_name[] = "geminifox.json";
 

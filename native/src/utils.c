@@ -1,9 +1,11 @@
 #include "utils.h"
 
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "mbedtls/base64.h"
 
@@ -78,4 +80,22 @@ size_t concat(char * dst, size_t argc, ...) {
     va_end(args);
     dst[offset] = 0;
     return offset;
+}
+
+
+int write_all(int fd, const char * buf, size_t size) {
+    size_t retry_from = 0;
+    while (retry_from < size) {
+        size_t bytes_written = write(fd, buf + retry_from, size - retry_from);
+        if (bytes_written <= 0) {
+            if (errno == EINTR) {
+                // Apparently that just happens sometimes
+                continue;
+            } else {
+                return -1;
+            }
+        }
+        retry_from += bytes_written;
+    }
+    return 0;
 }

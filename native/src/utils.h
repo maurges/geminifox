@@ -57,3 +57,6 @@ size_t concat(char * dst, size_t argc, ...);
 
 #define matches_literal(LIT, str, len) \
     (sizeof(LIT) - 1 == len && strncmp(LIT, str, len) == 0)
+
+
+int write_all(int fd, const char * buf, size_t size);
