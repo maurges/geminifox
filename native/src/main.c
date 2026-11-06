@@ -153,42 +153,10 @@ static void free_connect_info(struct connect_info * x) {
 }
 
 
-static int fetch_gemini(struct connect_info * cinfo, struct output p) {
-    int ret = 1;
-    const char * pers = "geminifox";
-
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
-    mbedtls_ssl_context ssl;
-    mbedtls_ssl_config conf;
-    mbedtls_x509_crt cacert;
-
-    // Initialize all session data
-    mbedtls_ssl_init(&ssl);
-    mbedtls_ssl_config_init(&conf);
-    mbedtls_x509_crt_init(&cacert);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
-    mbedtls_entropy_init(&entropy);
-
+static int connect_tcp(struct connect_info * cinfo, struct output p) {
+    int ret = -1;
     int sock = -1;
     struct addrinfo * addresses = NULL;
-    unsigned char * buf = NULL;
-
-    // Seed the rng
-    ret = mbedtls_ctr_drbg_seed(
-        &ctr_drbg,
-        mbedtls_entropy_func,
-        &entropy,
-        (const unsigned char *)pers,
-        strlen(pers)
-    );
-    if (ret != 0) {
-        fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
-        p.write_error(INTERNAL_INIT, sizeof(INTERNAL_INIT));
-        goto exit;
-    }
-
-    // Initialize certificates - skipped
 
     // Lookup the domain
     p.write_progress(LOOKUP_DOMAIN, sizeof(LOOKUP_DOMAIN));
@@ -252,6 +220,63 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
         goto exit;
     }
 
+exit:
+    if (addresses) {
+        freeaddrinfo(addresses);
+    }
+    if (sock != -1) {
+        return sock;
+    } else {
+        return ret;
+    }
+}
+
+struct tls_context {
+    mbedtls_entropy_context entropy;
+    mbedtls_ctr_drbg_context ctr_drbg;
+    mbedtls_ssl_context ssl;
+    mbedtls_ssl_config conf;
+    mbedtls_x509_crt cacert;
+};
+static struct tls_context new_tls_context() {
+    struct tls_context c;
+    mbedtls_ssl_init(&c.ssl);
+    mbedtls_ssl_config_init(&c.conf);
+    mbedtls_x509_crt_init(&c.cacert);
+    mbedtls_ctr_drbg_init(&c.ctr_drbg);
+    mbedtls_entropy_init(&c.entropy);
+    return c;
+}
+static void free_tls_context(struct tls_context * c) {
+    mbedtls_x509_crt_free(&c->cacert);
+    mbedtls_ssl_free(&c->ssl);
+    mbedtls_ssl_config_free(&c->conf);
+    mbedtls_ctr_drbg_free(&c->ctr_drbg);
+    mbedtls_entropy_free(&c->entropy);
+}
+
+static int tls_handshake(
+    int sock,
+    const char * hostname,
+    struct tls_context * c,
+    struct output p
+) {
+    int ret = -1;
+
+    // Seed the rng
+    const char * pers = "geminifox-handshake";
+    ret = mbedtls_ctr_drbg_seed(
+        &c->ctr_drbg,
+        mbedtls_entropy_func,
+        &c->entropy,
+        (const unsigned char *)pers,
+        strlen(pers)
+    );
+    if (ret != 0) {
+        fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
+        p.write_error(INTERNAL_INIT, sizeof(INTERNAL_INIT));
+        goto exit;
+    }
 
     mbedtls_net_context server_fd = { .fd = sock };
 
@@ -259,7 +284,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
 
     // Setup tls config
     ret = mbedtls_ssl_config_defaults(
-        &conf,
+        &c->conf,
         MBEDTLS_SSL_IS_CLIENT,
         MBEDTLS_SSL_TRANSPORT_STREAM,
         MBEDTLS_SSL_PRESET_DEFAULT
@@ -271,32 +296,32 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
     }
 
     // Setup rng for this config
-    mbedtls_ssl_conf_rng(&conf, mbedtls_ctr_drbg_random, &ctr_drbg);
+    mbedtls_ssl_conf_rng(&c->conf, mbedtls_ctr_drbg_random, &c->ctr_drbg);
     // Disable ssl verification, as gemini certs are self-signed
-    mbedtls_ssl_conf_authmode(&conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
-    mbedtls_ssl_conf_ca_chain(&conf, &cacert, NULL);
+    mbedtls_ssl_conf_authmode(&c->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
+    mbedtls_ssl_conf_ca_chain(&c->conf, &c->cacert, NULL);
 
     // mbedtls_ssl_conf_own_cert() // for mtls
 
     // Apply the config to to the ssl struct
-    ret = mbedtls_ssl_setup(&ssl, &conf);
+    ret = mbedtls_ssl_setup(&c->ssl, &c->conf);
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_setup failed with %d\n", ret);
         p.write_error(INTERNAL_SSL_SETUP, sizeof(INTERNAL_SSL_SETUP));
         goto exit;
     }
     // Set the hostname on ssl
-    ret = mbedtls_ssl_set_hostname(&ssl, cinfo->host);
+    ret = mbedtls_ssl_set_hostname(&c->ssl, hostname);
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_set_hostname failed with code %d\n", ret);
         p.write_error(INTERNAL_SSL_HOSTNAME, sizeof(INTERNAL_SSL_HOSTNAME));
         goto exit;
     }
     // Apply the ssl to the connection
-    mbedtls_ssl_set_bio(&ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+    mbedtls_ssl_set_bio(&c->ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
 
     // Perform the handshake
-    while ((ret = mbedtls_ssl_handshake(&ssl)) != 0) {
+    while ((ret = mbedtls_ssl_handshake(&c->ssl)) != 0) {
         if (ret != MBEDTLS_ERR_SSL_WANT_READ && ret != MBEDTLS_ERR_SSL_WANT_WRITE) {
             fprintf(
                 stderr,
@@ -307,12 +332,37 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
         }
     }
 
+exit:
+    if (ret != 0) {
+        free_tls_context(c);
+    }
+    return ret;
+}
+
+static int fetch_gemini(struct connect_info * cinfo, struct output p) {
+    int ret = 1;
+
+    struct tls_context c = new_tls_context();
+    int sock = -1;
+    unsigned char * buf = NULL;
+
+    sock = connect_tcp(cinfo, p);
+    if (sock < 0) {
+        goto exit;
+    }
+
+    ret = tls_handshake(sock, cinfo->host, &c, p);
+    if (ret != 0) {
+        goto exit;
+    }
+
     // Verify the certificate - skipped
+    // Will maybe add the check against a saved cert, but for now w/e
 
     // Write the request
     p.write_progress(SEND_REQUEST, sizeof(SEND_REQUEST));
     while (true) {
-        ret = mbedtls_ssl_write(&ssl, cinfo->request, cinfo->request_length);
+        ret = mbedtls_ssl_write(&c.ssl, cinfo->request, cinfo->request_length);
         if (ret > 0 && (size_t)ret == cinfo->request_length) {
             // Write success
             break;
@@ -339,7 +389,7 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
     const size_t buf_size = 524288; // Half a megabyte, since stdio limit is a megabyte
     buf = malloc(buf_size);
     while (true) {
-        ret = mbedtls_ssl_read(&ssl, buf, buf_size);
+        ret = mbedtls_ssl_read(&c.ssl, buf, buf_size);
 
         if (ret == MBEDTLS_ERR_SSL_WANT_READ || ret == MBEDTLS_ERR_SSL_WANT_WRITE) {
             // These two statuses mean we just retry the read
@@ -363,21 +413,13 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
     }
 
 exit:
-    // Clean up allocated things and return the exit code
-    if (addresses) {
-        freeaddrinfo(addresses);
-    }
     if (sock != -1) {
         close(sock);
     }
     if (buf) {
         free(buf);
     }
-    mbedtls_x509_crt_free(&cacert);
-    mbedtls_ssl_free(&ssl);
-    mbedtls_ssl_config_free(&conf);
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    mbedtls_entropy_free(&entropy);
+    free_tls_context(&c);
 
     return ret;
 }
@@ -390,13 +432,11 @@ static int make_certificate(FILE * cert_out, FILE * key_out) {
     mbedtls_pk_context key;
     const mbedtls_pk_info_t * pk_info;
     mbedtls_x509write_cert cert;
-    mbedtls_mpi serial;
 
     mbedtls_entropy_init(&entropy);
     mbedtls_ctr_drbg_init(&ctr_drbg);
     mbedtls_pk_init(&key);
     mbedtls_x509write_crt_init(&cert);
-    mbedtls_mpi_init(&serial);
 
     // Generate the key
 
@@ -430,11 +470,6 @@ static int make_certificate(FILE * cert_out, FILE * key_out) {
 
     mbedtls_x509write_crt_set_version(&cert, MBEDTLS_X509_CRT_VERSION_3);
     mbedtls_x509write_crt_set_md_alg(&cert, MBEDTLS_MD_SHA256);
-    ret = mbedtls_mpi_read_string(&serial, 10, "1");
-    if (ret != 0) {
-        fprintf(stderr, "Failed to read static MPI\n");
-        goto exit;
-    }
     ret = mbedtls_x509write_crt_set_serial_raw(&cert, (unsigned char *)"\x01", 1);
     if (ret != 0) {
         fprintf(stderr, "Failed to set static serial\n");
@@ -513,7 +548,6 @@ static int make_certificate(FILE * cert_out, FILE * key_out) {
 
     ret = 0;
 exit:
-    mbedtls_mpi_free(&serial);
     mbedtls_x509write_crt_free(&cert);
     mbedtls_pk_free(&key);
     mbedtls_ctr_drbg_free(&ctr_drbg);
