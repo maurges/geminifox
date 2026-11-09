@@ -83,6 +83,38 @@ size_t concat(char * dst, size_t argc, ...) {
 }
 
 
+/// Returns negative for error, positive for bytes read. Null-terminates the buf
+int read_all_file(const char * restrict fname, char * restrict buf, size_t size) {
+    int ret = -1;
+
+    FILE * f = fopen(fname, "r");
+    if (f == NULL) {
+        fprintf(stderr, "Failed to open %s for reading\n", fname);
+        return -1;
+    }
+
+    size_t total = 0;
+    while (true) {
+        size_t read = fread(buf + total, 1, size - total, f);
+        total += read;
+        if (read == 0) {
+            if (feof(f)) {
+                buf[total] = '\0';
+                ret = total;
+                goto exit;
+            } else if (ferror(f)) {
+                fprintf(stderr, "Failed to read from %s\n", fname);
+                ret = -1;
+                goto exit;
+            }
+        }
+    }
+
+exit:
+    if (f) { fclose(f); }
+    return ret;
+}
+
 int write_all(int fd, const char * buf, size_t size) {
     size_t retry_from = 0;
     while (retry_from < size) {

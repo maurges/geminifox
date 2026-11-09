@@ -59,4 +59,5 @@ size_t concat(char * dst, size_t argc, ...);
     (sizeof(LIT) - 1 == len && strncmp(LIT, str, len) == 0)
 
 
+int read_all_file(const char * restrict fname, char * restrict buf, size_t size);
 int write_all(int fd, const char * buf, size_t size);

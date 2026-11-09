@@ -13,6 +13,7 @@
 #include "mbedtls/base64.h"
 #include "mbedtls/ctr_drbg.h"
 #include "mbedtls/entropy.h"
+#include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
 
@@ -153,7 +154,7 @@ static void free_connect_info(struct connect_info * x) {
 }
 
 
-static int connect_tcp(struct connect_info * cinfo, struct output p) {
+static int connect_tcp(const struct connect_info * cinfo, struct output p) {
     int ret = -1;
     int sock = -1;
     struct addrinfo * addresses = NULL;
@@ -237,6 +238,8 @@ struct tls_context {
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
     mbedtls_x509_crt cacert;
+    mbedtls_pk_context privkey;
+    mbedtls_x509_crt pubkey;
 };
 static struct tls_context new_tls_context() {
     struct tls_context c;
@@ -245,9 +248,28 @@ static struct tls_context new_tls_context() {
     mbedtls_x509_crt_init(&c.cacert);
     mbedtls_ctr_drbg_init(&c.ctr_drbg);
     mbedtls_entropy_init(&c.entropy);
+    mbedtls_pk_init(&c.privkey);
+    mbedtls_x509_crt_init(&c.pubkey);
+
+    // Seed the rng
+    const char pers[] = "geminifox";
+    int ret = mbedtls_ctr_drbg_seed(
+        &c.ctr_drbg,
+        mbedtls_entropy_func,
+        &c.entropy,
+        (const unsigned char *)pers,
+        sizeof(pers)
+    );
+    if (ret != 0) {
+        fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
+        abort();
+    }
+
     return c;
 }
 static void free_tls_context(struct tls_context * c) {
+    mbedtls_x509_crt_free(&c->pubkey);
+    mbedtls_pk_free(&c->privkey);
     mbedtls_x509_crt_free(&c->cacert);
     mbedtls_ssl_free(&c->ssl);
     mbedtls_ssl_config_free(&c->conf);
@@ -259,24 +281,10 @@ static int tls_handshake(
     int sock,
     const char * hostname,
     struct tls_context * c,
+    bool use_key,
     struct output p
 ) {
     int ret = -1;
-
-    // Seed the rng
-    const char * pers = "geminifox-handshake";
-    ret = mbedtls_ctr_drbg_seed(
-        &c->ctr_drbg,
-        mbedtls_entropy_func,
-        &c->entropy,
-        (const unsigned char *)pers,
-        strlen(pers)
-    );
-    if (ret != 0) {
-        fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
-        p.write_error(INTERNAL_INIT, sizeof(INTERNAL_INIT));
-        goto exit;
-    }
 
     mbedtls_net_context server_fd = { .fd = sock };
 
@@ -301,7 +309,14 @@ static int tls_handshake(
     mbedtls_ssl_conf_authmode(&c->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
     mbedtls_ssl_conf_ca_chain(&c->conf, &c->cacert, NULL);
 
-    // mbedtls_ssl_conf_own_cert() // for mtls
+    if (use_key) {
+        ret = mbedtls_ssl_conf_own_cert(&c->conf, &c->pubkey, &c->privkey);
+        if (ret != 0) {
+            fprintf(stderr, "mbedtls_ssl_conf_own_cert failed with %d\n", ret);
+            p.write_error(INTERNAL_SSL_CONFIG, sizeof(INTERNAL_SSL_CONFIG));
+            goto exit;
+        }
+    }
 
     // Apply the config to to the ssl struct
     ret = mbedtls_ssl_setup(&c->ssl, &c->conf);
@@ -339,7 +354,70 @@ exit:
     return ret;
 }
 
-static int fetch_gemini(struct connect_info * cinfo, struct output p) {
+/// 0 if the key was loaded, 1 if it wasn't, other errors for mbedtls failure
+static int load_key(
+    const struct connect_info * cinfo,
+    mbedtls_pk_context * privkey,
+    mbedtls_x509_crt * pubkey,
+    /// A seeded rng for use with mbedtls_ctr_drbg_random
+    void * p_rng
+) {
+    int ret = -1;
+
+    (void)cinfo;
+
+    const char pk_name[] = "./example.key.pem";
+    const char cert_name[] = "./example.pem";
+
+    char buf[4096] = {};
+
+    ret = read_all_file(pk_name, buf, sizeof(buf) - 1);
+    if (ret <= 0) {
+        goto exit;
+    }
+    size_t buf_len = ret;
+    ret = mbedtls_pk_parse_key(
+        privkey,
+        (unsigned char *)buf,
+        buf_len + 1, // including the terminator
+        NULL,
+        0,
+        mbedtls_ctr_drbg_random,
+        p_rng
+    );
+    if (ret != 0) {
+        mbedtls_strerror(ret, buf, sizeof(buf));
+        fprintf(stderr, "Failed to parse private key at %s, code %d: %s\n", pk_name, ret, buf);
+        goto exit;
+    }
+
+    ret = read_all_file(cert_name, buf, sizeof(buf) - 1);
+    if (ret <= 0) {
+        goto exit;
+    }
+    buf_len = ret;
+    ret = mbedtls_x509_crt_parse(
+        pubkey,
+        (unsigned char *)buf,
+        buf_len + 1 // including the terminator
+    );
+    if (ret != 0) {
+        mbedtls_strerror(ret, buf, sizeof(buf));
+        fprintf(
+            stderr,
+            "Failed to parse public certificate at %s, code %d: %s\n",
+            cert_name,
+            ret,
+            buf
+        );
+        goto exit;
+    }
+
+exit:
+    return ret;
+}
+
+static int fetch_gemini(const struct connect_info * cinfo, const struct output p) {
     int ret = 1;
 
     struct tls_context c = new_tls_context();
@@ -351,7 +429,13 @@ static int fetch_gemini(struct connect_info * cinfo, struct output p) {
         goto exit;
     }
 
-    ret = tls_handshake(sock, cinfo->host, &c, p);
+    ret = load_key(cinfo, &c.privkey, &c.pubkey, &c.ctr_drbg);
+    if (ret != 0 && ret != 1) {
+        goto exit;
+    }
+    bool use_key = ret != 1;
+
+    ret = tls_handshake(sock, cinfo->host, &c, use_key, p);
     if (ret != 0) {
         goto exit;
     }
