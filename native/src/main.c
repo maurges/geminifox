@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
 
+#include <errno.h>
 #include <netdb.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -8,6 +9,7 @@
 #include <unistd.h>
 
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 
 #include "mbedtls/base64.h"
@@ -639,6 +641,83 @@ exit:
     return ret;
 }
 
+static int keygen(const char * domain) {
+    int ret = -1;
+
+    char path[1024] = {};
+    size_t path_off = data_home(path, sizeof(path));
+    if (path_off == 0) {
+        fprintf(stderr, "Can't create keys as the data directory is undefined\n");
+        return -1;
+    }
+
+    // Ensure the dir for all keys exists
+    const char keys_subdir[] = "client_certificates/";
+    if (path_off + sizeof(keys_subdir) >= sizeof(path)) {
+        fprintf(stderr, "Internal: requested path is too large\n");
+        return -1;
+    }
+    memcpy(path + path_off, keys_subdir, sizeof(keys_subdir));
+    path_off += sizeof(keys_subdir) - 1;
+    ret = mkdir(path, 0755);
+    // It's ok if it exists
+    if (ret != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create %s\n", path);
+        return ret;
+    }
+    // Create a directory for this domain
+    size_t domain_len = strcpy_len(path + path_off, sizeof(path) - path_off, domain);
+    path_off += domain_len;
+    if (path_off + 1 >= sizeof(path)) {
+        fprintf(stderr, "Internal: requested path is too large\n");
+        return -1;
+    }
+    ret = mkdir(path, 0755);
+    if (ret != 0) {
+        if (errno == EEXIST) {
+            fprintf(stderr, "Overwriting an existing key at %s\n", path);
+            // Maybe we disallow this in the future
+        } else {
+            fprintf(stderr, "Failed to create %s\n", path);
+            return ret;
+        }
+    }
+    path[path_off] = '/';
+    path_off += 1;
+
+    // Open root.pem and root.pem.key - naming for future support of subpaths
+    // if I'm ever arsed
+    const char root[] = "root.pem";
+    const char root_key[] = "root.key.pem";
+    if (path_off + sizeof(root_key) >= sizeof(path)) {
+        fprintf(stderr, "Internal: requested path is too large\n");
+        return -1;
+    }
+    memcpy(path + path_off, root, sizeof(root));
+    FILE * cert_out = fopen(path, "w");
+    if (cert_out == NULL) {
+        fprintf(stderr, "Failed to open %s for writing\n", path);
+        return -1;
+    }
+    memcpy(path + path_off, root_key, sizeof(root_key));
+    FILE * key_out = fopen(path, "w");
+    if (key_out == NULL) {
+        fprintf(stderr, "Failed to open %s for writing\n", path);
+        fclose(cert_out);
+        return -1;
+    }
+
+    ret = make_certificate(cert_out, key_out);
+    fclose(cert_out);
+    fclose(key_out);
+    if (ret != 0) {
+        fprintf(stderr, "Failed to make certificate\n");
+        return -1;
+    }
+
+    return 0;
+}
+
 int main(int argc, const char ** argv) {
     int ret = -1;
 
@@ -735,30 +814,17 @@ int main(int argc, const char ** argv) {
         free_connect_info(&c);
 
     } else if (matches_literal("keygen", command, action_length)) {
-        // Open arg.pem and arg.key.pem
-        size_t len = strlen(arg);
-        char * out_name = malloc(len + 9);
-        concat(out_name, 2, arg, len, ".pem", 4);
-        FILE * cert_out = fopen(out_name, "w");
-        concat(out_name, 2, arg, len, ".key.pem", 8);
-        FILE * key_out = fopen(out_name, "w");
-        if (cert_out == NULL || key_out == NULL) {
-            fprintf(stderr, "Failed to open %s for writing\n", arg);
-            return -1;
-        }
-
-        int r = make_certificate(cert_out, key_out);
-        if (r != 0) {
-            fprintf(stderr, "Failed to make certificate\n");
-            return -1;
-        }
-        fclose(cert_out);
-        fclose(key_out);
+        ret = keygen(arg);
 
     } else if (matches_literal("version", command, action_length)) {
         const char field[] = "lazy impl";
         const char message[] = "";
         write_json_body(field, sizeof(field) - 1, message, 0);
+
+    } else if (matches_literal("debug", command, action_length)) {
+        char buf[1024] = {};
+        size_t off = data_home(buf, sizeof(buf));
+        printf("%lu: %s\n", off, buf);
 
     } else {
         fprintf(stderr, "Unknown command at %s\n", command);

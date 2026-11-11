@@ -53,6 +53,8 @@ inline struct str str_of_parts(char * val, size_t len) {
 
 /// Clone a string slice to a newly allocated string, and null-terminates it
 char * strclone(const char * source, size_t length);
+/// Copy a null-terminated string and return its length
+size_t strcpy_len(char * restrict dest, size_t dest_len, const char * restrict source);
 size_t concat(char * dst, size_t argc, ...);
 
 #define matches_literal(LIT, str, len) \
@@ -61,3 +63,7 @@ size_t concat(char * dst, size_t argc, ...);
 
 int read_all_file(const char * restrict fname, char * restrict buf, size_t size);
 int write_all(int fd, const char * buf, size_t size);
+
+/// Writes "$XDG_DATA_HOME/geminifox/" to buf, falling back to ~/.local/share
+/// Returns size of data written, or a zero value for error
+size_t data_home(char * buf, size_t max_len);

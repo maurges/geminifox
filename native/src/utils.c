@@ -67,6 +67,17 @@ char * strclone(const char * source, size_t length) {
     return out;
 }
 
+size_t strcpy_len(char * restrict dest, size_t dest_len, const char * restrict source) {
+    size_t i = 0;
+    for (; i < dest_len && source[i] != '\0'; ++i) {
+        dest[i] = source[i];
+    }
+    if (i < dest_len) {
+        dest[i] = '\0';
+    }
+    return i;
+}
+
 size_t concat(char * dst, size_t argc, ...) {
     va_list args;
     va_start(args, argc);
@@ -130,4 +141,40 @@ int write_all(int fd, const char * buf, size_t size) {
         retry_from += bytes_written;
     }
     return 0;
+}
+
+
+size_t data_home(char * buf, size_t max_len) {
+    const char geminifox[] = "geminifox/";
+    size_t offset = 0;
+
+    const char * xdg_data_home = getenv("XDG_DATA_HOME");
+    if (xdg_data_home != NULL) {
+        offset = strcpy_len(buf, max_len, xdg_data_home);
+        if (offset >= max_len) {
+            return 0;
+        }
+        buf[offset] = '/';
+        offset += 1;
+    } else {
+        const char * home = getenv("HOME");
+        if (home == NULL) {
+            fprintf(stderr, "Failed to lookup $HOME\n");
+            return 0;
+        }
+        offset = strcpy_len(buf, max_len, home);
+        const char suffix[] = "/.local/share/";
+        if (offset + sizeof(suffix) >= max_len) {
+            return 0;
+        }
+        memcpy(buf + offset, suffix, sizeof(suffix));
+        offset += sizeof(suffix) - 1;
+    }
+
+    if (offset + sizeof(geminifox) > max_len) {
+        return 0;
+    }
+    memcpy(buf + offset, geminifox, sizeof(geminifox));
+    offset += sizeof(geminifox) - 1;
+    return offset;
 }
