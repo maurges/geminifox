@@ -165,9 +165,9 @@ static int install_self_to(const char * restrict to, const char * restrict from)
     // TODO what about mmap? What about actually using system-local copying?
     // Maybe just shell to cp actually?
     char buf[10240];
-    size_t bytes_read = 0;
-    while ( (bytes_read = read(src_fd, buf, sizeof(buf))) != 0 ) {
-        ret = write_all(dst_fd, buf, bytes_read);
+    ssize_t bytes_read = 0;
+    while ( (bytes_read = read(src_fd, buf, sizeof(buf))) > 0 ) {
+        ret = write_all(dst_fd, buf, (size_t)bytes_read);
         if (ret != 0) {
             fprintf(stderr, "Failed to copy %s to %s\n", from, to);
             goto exit;

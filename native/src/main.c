@@ -63,7 +63,12 @@ static void write_json_body(
     const char prefix[] = "{\"version\":\"" VERSION "\",\"";
     const char infix[] = "\":\"";
     const char suffix[] = "\"}";
-    uint32_t length = sizeof(prefix) - 1 + field_len + sizeof(infix) - 1 + message_len + sizeof(suffix) - 1;
+    size_t length_s = sizeof(prefix) - 1 + field_len + sizeof(infix) - 1 + message_len + sizeof(suffix) - 1;
+    if (length_s >= UINT32_MAX) {
+        fprintf(stderr, "Overflow converting size_t to uint32_t\n");
+        abort();
+    }
+    uint32_t length = (uint32_t)length_s;
     fwrite(&length, sizeof(length), 1, stdout);
     fwrite(prefix, 1, sizeof(prefix) - 1, stdout);
     fwrite(field, 1, field_len, stdout);
@@ -129,7 +134,7 @@ static int parse_url(const char * restrict url, struct connect_info * restrict o
     if (url[i] == ':') {
         ++i;
         size_t port_start = i;
-        while (url[i] != '/') {
+        while (url[i] != '/' && url[i] != '\0') {
             ++i;
         }
         size_t port_end = i;
@@ -442,7 +447,7 @@ static int load_key(
     if (ret <= 0) {
         goto exit;
     }
-    size_t buf_len = ret;
+    size_t buf_len = (size_t)ret;
     ret = mbedtls_pk_parse_key(
         privkey,
         (unsigned char *)buf,
@@ -464,7 +469,7 @@ static int load_key(
     if (ret <= 0) {
         goto exit;
     }
-    buf_len = ret;
+    buf_len = (size_t)ret;
     ret = mbedtls_x509_crt_parse(
         pubkey,
         (unsigned char *)buf,
@@ -558,7 +563,7 @@ static int fetch_gemini(const struct connect_info * restrict cinfo, const struct
             break;
         } else if (ret > 0) {
             // ret holds the length read
-            p.write_result(buf, ret);
+            p.write_result(buf, (size_t)ret);
         } else {
             fprintf(stderr, "mbedtls_ssl_read failed with code %d\n", ret);
             p.write_error(RESPONSE_FAILED, sizeof(RESPONSE_FAILED));
@@ -767,8 +772,8 @@ int main(int argc, const char ** argv) {
         return 1;
     }
 
-    // XXX
-    if (argc >= 1 && strcmp(argv[1], "--install") == 0) {
+    // TODO proper args, maybe unified with commands
+    if (argc >= 2 && strcmp(argv[1], "--install") == 0) {
         interactive_install(argv[0], false);
 
         return 0;
@@ -789,7 +794,7 @@ int main(int argc, const char ** argv) {
             return 1;
         }
 
-        unsigned char buf[1025];
+        unsigned char buf[1024];
         unsigned char buf_b64_[1500];
         // We mutate the pointer later, and never touch the original buf
         unsigned char * restrict buf_b64 = buf_b64_;
@@ -801,17 +806,17 @@ int main(int argc, const char ** argv) {
             return 1;
         }
         // strip trailing whitespace
-        while (buf_b64[b64_size - 1] == '\n') {
+        while (b64_size > 0 && buf_b64[b64_size - 1] == '\n') {
             b64_size -= 1;
         }
         // skip json framing if present
-        if (buf_b64[0] == '"') {
+        if (b64_size > 0 && buf_b64[0] == '"') {
             buf_b64 += 1;
             b64_size -= 2;
         }
 
         size_t size = 0;
-        err = mbedtls_base64_decode(buf, sizeof(buf), &size, buf_b64, b64_size);
+        err = mbedtls_base64_decode(buf, sizeof(buf) - 1, &size, buf_b64, b64_size);
         buf[size] = '\0';
         if (err != 0) {
             fprintf(stderr, "failed to parse base64\n");

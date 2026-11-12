@@ -51,7 +51,7 @@ int main() {
 
         bytevec_append(&line, (unsigned char *)buf, size);
         if (line.data[line.length - 1] == '\n' || (was_eof && line.length != 0)) {
-            int32_t length = line.length;
+            int32_t length = (int)line.length; // yolo conversion
             fwrite(&length, sizeof(length), 1, stdout);
             fwrite(line.data, 1, line.length, stdout);
             line.length = 0;

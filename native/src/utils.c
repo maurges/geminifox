@@ -103,6 +103,15 @@ size_t concat(char * restrict dst, size_t argc, ...) {
 }
 
 
+static int ull2i(unsigned long long x) {
+    if (x > INT_MAX) {
+        fprintf(stderr, "Overflowing conversion of unsigned long to int\n");
+        abort();
+    }
+    return (int)x;
+}
+
+
 /// Returns negative for error, positive for bytes read. Null-terminates the buf
 int read_all_file(const char * restrict fname, char * restrict buf, size_t size) {
     int ret = -1;
@@ -120,7 +129,7 @@ int read_all_file(const char * restrict fname, char * restrict buf, size_t size)
         if (read == 0) {
             if (feof(f)) {
                 buf[total] = '\0';
-                ret = total;
+                ret = ull2i(total);
                 goto exit;
             } else if (ferror(f)) {
                 fprintf(stderr, "Failed to read from %s\n", fname);
@@ -138,7 +147,7 @@ exit:
 int write_all(int fd, const char * restrict buf, size_t size) {
     size_t retry_from = 0;
     while (retry_from < size) {
-        size_t bytes_written = write(fd, buf + retry_from, size - retry_from);
+        ssize_t bytes_written = write(fd, buf + retry_from, size - retry_from);
         if (bytes_written <= 0) {
             if (errno == EINTR) {
                 // Apparently that just happens sometimes
@@ -147,7 +156,7 @@ int write_all(int fd, const char * restrict buf, size_t size) {
                 return -1;
             }
         }
-        retry_from += bytes_written;
+        retry_from += (size_t)bytes_written;
     }
     return 0;
 }
