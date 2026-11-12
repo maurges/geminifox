@@ -2,7 +2,6 @@
 #define _DARWIN_C_SOURCE
 #define _XOPEN_SOURCE 500
 
-
 #include "install.h"
 
 #include <errno.h>
@@ -21,33 +20,6 @@
 #include <sys/statvfs.h>
 
 #include "utils.h"
-
-// Returns:
-// 0 if exists and is writable by user
-// -1 if is not writable
-// -2 if doesn't exist
-// -3 if worse
-static int is_writable(const char * dir) {
-    struct stat st;
-    if (stat(dir, &st) != 0) {
-        // Does not exist
-        return -2;
-    }
-    struct statvfs vst;
-    if (statvfs(dir, &vst) != 0) {
-        // Failed to get filesystem info, so can't access
-        return -3;
-    }
-    if ((vst.f_flag & ST_RDONLY) != 0) {
-        // Read only filesystem
-        return -1;
-    }
-    if (faccessat(AT_FDCWD, dir, W_OK, AT_EACCESS) != 0) {
-        // Write permission not granted for dir
-        return -1;
-    }
-    return 0;
-}
 
 
 static const char manifest_name[] = "geminifox.json";

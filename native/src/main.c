@@ -230,7 +230,13 @@ exit:
     if (sock != -1) {
         return sock;
     } else {
-        return ret;
+        // Non-negative ret is a valid socket, so
+        if (ret > 0) {
+            ret = -ret;
+        } else if (ret == 0) {
+            ret = -1;
+        }
+        return ret ;
     }
 }
 
@@ -346,6 +352,7 @@ static int tls_handshake(
                 ret
             );
             p.write_error(HANDSHAKE_FAILED, sizeof(HANDSHAKE_FAILED));
+            goto exit;
         }
     }
 
@@ -354,6 +361,41 @@ exit:
         free_tls_context(c);
     }
     return ret;
+}
+
+/// Writes directory to buf and returns its length. Returns 0 on error
+static size_t path_for_key(const char * domain, char * buf, size_t buf_len) {
+    int ret = -1;
+
+    size_t path_off = data_home(buf, buf_len);
+    if (path_off == 0) {
+        fprintf(stderr, "Can't create keys as the data directory is undefined\n");
+        return 0;
+    }
+
+    const char keys_subdir[] = "client_certificates/";
+    if (path_off + sizeof(keys_subdir) >= buf_len) {
+        fprintf(stderr, "Internal: requested path is too large\n");
+        return 0;
+    }
+    memcpy(buf + path_off, keys_subdir, sizeof(keys_subdir));
+    path_off += sizeof(keys_subdir) - 1;
+    // Create the keys directory just in case
+    ret = mkdir(buf, 0755);
+    if (ret != 0 && errno != EEXIST) {
+        fprintf(stderr, "Failed to create directory for keys %s\n", buf);
+        return 0;
+    }
+
+    size_t domain_len = strcpy_len(buf + path_off, buf_len - path_off, domain);
+    path_off += domain_len;
+    if (path_off + 1 >= buf_len) {
+        fprintf(stderr, "Internal: requested path is too large\n");
+        return 0;
+    }
+    buf[path_off] = '/';
+    path_off += 1;
+    return path_off;
 }
 
 /// 0 if the key was loaded, 1 if it wasn't, other errors for mbedtls failure
@@ -368,12 +410,30 @@ static int load_key(
 
     (void)cinfo;
 
-    const char pk_name[] = "./example.key.pem";
-    const char cert_name[] = "./example.pem";
+    char path[1024] = {};
+    const char root[] = "root.pem";
+    const char root_key[] = "root.key.pem";
+    size_t path_off = path_for_key(cinfo->host, path, sizeof(path));
+    if (path_off == 0) {
+        fprintf(stderr, "Failed to access the directory with certificates\n");
+        ret = 1;
+        goto exit;
+    }
+    if (path_off + sizeof(root_key) >= sizeof(path)) {
+        fprintf(stderr, "Internal: requested path is too large\n");
+        return -1;
+    }
+    if (is_writable(path) <= -2) {
+        fprintf(stderr, "Key for %s doesn't exist\n", cinfo->host);
+        ret = 1;
+        goto exit;
+    }
 
     char buf[4096] = {};
 
-    ret = read_all_file(pk_name, buf, sizeof(buf) - 1);
+    // Read the key
+    memcpy(path + path_off, root_key, sizeof(root_key));
+    ret = read_all_file(path, buf, sizeof(buf) - 1);
     if (ret <= 0) {
         goto exit;
     }
@@ -389,11 +449,13 @@ static int load_key(
     );
     if (ret != 0) {
         mbedtls_strerror(ret, buf, sizeof(buf));
-        fprintf(stderr, "Failed to parse private key at %s, code %d: %s\n", pk_name, ret, buf);
+        fprintf(stderr, "Failed to parse private key at %s, code %d: %s\n", path, ret, buf);
         goto exit;
     }
 
-    ret = read_all_file(cert_name, buf, sizeof(buf) - 1);
+    // Read the cert
+    memcpy(path + path_off, root, sizeof(root));
+    ret = read_all_file(path, buf, sizeof(buf) - 1);
     if (ret <= 0) {
         goto exit;
     }
@@ -408,13 +470,14 @@ static int load_key(
         fprintf(
             stderr,
             "Failed to parse public certificate at %s, code %d: %s\n",
-            cert_name,
+            path,
             ret,
             buf
         );
         goto exit;
     }
 
+    fprintf(stderr, "Loaded key for %s\n", cinfo->host);
 exit:
     return ret;
 }
@@ -645,33 +708,8 @@ static int keygen(const char * domain) {
     int ret = -1;
 
     char path[1024] = {};
-    size_t path_off = data_home(path, sizeof(path));
-    if (path_off == 0) {
-        fprintf(stderr, "Can't create keys as the data directory is undefined\n");
-        return -1;
-    }
-
-    // Ensure the dir for all keys exists
-    const char keys_subdir[] = "client_certificates/";
-    if (path_off + sizeof(keys_subdir) >= sizeof(path)) {
-        fprintf(stderr, "Internal: requested path is too large\n");
-        return -1;
-    }
-    memcpy(path + path_off, keys_subdir, sizeof(keys_subdir));
-    path_off += sizeof(keys_subdir) - 1;
-    ret = mkdir(path, 0755);
-    // It's ok if it exists
-    if (ret != 0 && errno != EEXIST) {
-        fprintf(stderr, "Failed to create %s\n", path);
-        return ret;
-    }
+    size_t path_off = path_for_key(domain, path, sizeof(path));
     // Create a directory for this domain
-    size_t domain_len = strcpy_len(path + path_off, sizeof(path) - path_off, domain);
-    path_off += domain_len;
-    if (path_off + 1 >= sizeof(path)) {
-        fprintf(stderr, "Internal: requested path is too large\n");
-        return -1;
-    }
     ret = mkdir(path, 0755);
     if (ret != 0) {
         if (errno == EEXIST) {
@@ -682,8 +720,6 @@ static int keygen(const char * domain) {
             return ret;
         }
     }
-    path[path_off] = '/';
-    path_off += 1;
 
     // Open root.pem and root.pem.key - naming for future support of subpaths
     // if I'm ever arsed

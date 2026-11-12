@@ -63,6 +63,12 @@ size_t concat(char * dst, size_t argc, ...);
 
 int read_all_file(const char * restrict fname, char * restrict buf, size_t size);
 int write_all(int fd, const char * buf, size_t size);
+// Returns:
+// 0 if exists and is writable by user
+// -1 if is not writable
+// -2 if doesn't exist
+// -3 if worse
+int is_writable(const char * dir);
 
 /// Writes "$XDG_DATA_HOME/geminifox/" to buf, falling back to ~/.local/share
 /// Returns size of data written, or a zero value for error

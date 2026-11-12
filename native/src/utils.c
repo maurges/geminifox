@@ -1,11 +1,20 @@
+#define _POSIX_C_SOURCE 200809L
+#define _DARWIN_C_SOURCE
+#define _XOPEN_SOURCE 500
+
 #include "utils.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <sys/stat.h>
+#include <sys/statvfs.h>
+
 
 #include "mbedtls/base64.h"
 
@@ -139,6 +148,28 @@ int write_all(int fd, const char * buf, size_t size) {
             }
         }
         retry_from += bytes_written;
+    }
+    return 0;
+}
+
+int is_writable(const char * dir) {
+    struct stat st;
+    if (stat(dir, &st) != 0) {
+        // Does not exist
+        return -2;
+    }
+    struct statvfs vst;
+    if (statvfs(dir, &vst) != 0) {
+        // Failed to get filesystem info, so can't access
+        return -3;
+    }
+    if ((vst.f_flag & ST_RDONLY) != 0) {
+        // Read only filesystem
+        return -1;
+    }
+    if (faccessat(AT_FDCWD, dir, W_OK, AT_EACCESS) != 0) {
+        // Write permission not granted for dir
+        return -1;
     }
     return 0;
 }
