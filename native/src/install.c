@@ -96,7 +96,8 @@ static struct str find_manifest_location(const char * home, size_t home_len) {
         // All good, can create the file there
     } else if (dir_writable == -2 && mozilla_writable == 0) {
         // Need to create the directory first
-        mkdir(manifest_location, 0755); // TODO don't create here maybe
+        mkdir(manifest_location, 0755);
+        // TODO should actually create when writing instead of discovering, but creating recursively is hard
     } else {
         fprintf(
             stderr,
@@ -113,51 +114,29 @@ errexit:
     return nullstr();
 }
 
-static struct str find_bin_location(const char * home, size_t home_len) {
-    char * bin_location = NULL;
-
+static struct str find_bin_location() {
     const char bin_name[] = "geminifox-native";
 
-    // Try the global location first
-    const char usr_local_bin[] = "/usr/local/bin/";
-    if (is_writable(usr_local_bin) == 0) {
-        // This function must return an allocated string, so alloc and copy
-        bin_location = malloc(sizeof(usr_local_bin) - 1 + sizeof(bin_name));
-        size_t len = concat(
-            bin_location, 2,
-            usr_local_bin, sizeof(usr_local_bin) - 1,
-            bin_name, sizeof(bin_name)
-        );
-        return str_of_parts(bin_location, len);
+    struct str path = {
+        .val = malloc(1024),
+        .len = 1023,
+    };
+    size_t path_off = data_home(path.val, path.len);
+    if (path_off == 0) {
+        fprintf(stderr, "Can't find XDG_DATA_HOME for binary\n");
+        free(path.val);
+        return nullstr();
     }
-
-    // Try in home
-    const char local_bin[] = "/.local/bin/";
-    const char bin[] = "/bin/";
-    bin_location = malloc(home_len + sizeof(local_bin) - 1 + sizeof(bin_name));
-    memcpy(bin_location, home, home_len);
-    // Try local-bin
-    memcpy(bin_location + home_len, local_bin, sizeof(local_bin)); // with \0
-    if (is_writable(bin_location) == 0) {
-        memcpy(bin_location + home_len + sizeof(local_bin) - 1, bin_name, sizeof(bin_name));
-        return str_of_parts(
-            bin_location,
-            home_len + sizeof(local_bin) - 1 + sizeof(bin_name) - 1
-        );
+    path.len = path_off;
+    if (path.len + sizeof(bin_name) >= 1024) {
+        char * new_buf = malloc(path.len + sizeof(bin_name));
+        memcpy(new_buf, path.val, path.len);
+        free(path.val);
+        path.val = new_buf;
     }
-    // Try /bin
-    memcpy(bin_location + home_len, bin, sizeof(bin)); // with \0
-    if (is_writable(bin_location) == 0) {
-        memcpy(bin_location + home_len + sizeof(bin) - 1, bin_name, sizeof(bin_name));
-        return str_of_parts(
-            bin_location,
-            home_len + sizeof(bin) - 1 + sizeof(bin_name) - 1
-        );
-    }
-
-    fprintf(stderr, "Can't find location for binaries\n");
-    free(bin_location);
-    return nullstr();
+    memcpy(path.val + path.len, bin_name, sizeof(bin_name));
+    path.len += sizeof(bin_name) - 1;
+    return path;
 }
 
 static int install_self_to(const char * to, const char * from) {
@@ -258,7 +237,7 @@ int interactive_install(const char * self_path, bool dry_run) {
         manifest_location.val = malloc(1);
         manifest_location.val[0] = '\0';
     }
-    binary_location = find_bin_location(home, home_len);
+    binary_location = find_bin_location();
     if (!binary_location.val) {
         binary_location.val = malloc(1);
         binary_location.val[0] = '\0';
