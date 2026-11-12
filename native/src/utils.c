@@ -19,7 +19,7 @@
 #include "mbedtls/base64.h"
 
 #if 0
-static void bytevec_append(struct bytevec * vec, unsigned char * buf, size_t length) {
+void bytevec_append(struct bytevec * restrict vec, unsigned char * restrict buf, size_t length) {
     if (vec->data == NULL) {
         vec->capacity = 256;
         while (vec->capacity < length) {
@@ -42,7 +42,7 @@ static void bytevec_append(struct bytevec * vec, unsigned char * buf, size_t len
 }
 #endif
 
-struct bytevec base64_encode(const unsigned char * data, size_t length) {
+struct bytevec base64_encode(const unsigned char * restrict data, size_t length) {
     size_t out_length = 0;
 
     int r = mbedtls_base64_encode(NULL, 0, &out_length, data, length);
@@ -69,8 +69,8 @@ struct bytevec base64_encode(const unsigned char * data, size_t length) {
 
 
 /// Clone a string slice to a newly allocated string, and null-terminates it
-char * strclone(const char * source, size_t length) {
-    char * out = malloc(length + 1);
+char * strclone(const char * restrict source, size_t length) {
+    char * restrict out = malloc(length + 1);
     memcpy(out, source, length);
     out[length] = '\0';
     return out;
@@ -87,12 +87,12 @@ size_t strcpy_len(char * restrict dest, size_t dest_len, const char * restrict s
     return i;
 }
 
-size_t concat(char * dst, size_t argc, ...) {
+size_t concat(char * restrict dst, size_t argc, ...) {
     va_list args;
     va_start(args, argc);
     size_t offset = 0;
     for (size_t i = 0; i < argc; ++i) {
-        const char * buf = va_arg(args, const char *);
+        const char * restrict buf = va_arg(args, const char *);
         size_t len = va_arg(args, size_t);
         memcpy(dst + offset, buf, len);
         offset += len;
@@ -107,7 +107,7 @@ size_t concat(char * dst, size_t argc, ...) {
 int read_all_file(const char * restrict fname, char * restrict buf, size_t size) {
     int ret = -1;
 
-    FILE * f = fopen(fname, "r");
+    FILE * restrict f = fopen(fname, "r");
     if (f == NULL) {
         fprintf(stderr, "Failed to open %s for reading\n", fname);
         return -1;
@@ -135,7 +135,7 @@ exit:
     return ret;
 }
 
-int write_all(int fd, const char * buf, size_t size) {
+int write_all(int fd, const char * restrict buf, size_t size) {
     size_t retry_from = 0;
     while (retry_from < size) {
         size_t bytes_written = write(fd, buf + retry_from, size - retry_from);
@@ -152,7 +152,7 @@ int write_all(int fd, const char * buf, size_t size) {
     return 0;
 }
 
-int is_writable(const char * dir) {
+int is_writable(const char * restrict dir) {
     struct stat st;
     if (stat(dir, &st) != 0) {
         // Does not exist
@@ -175,11 +175,11 @@ int is_writable(const char * dir) {
 }
 
 
-size_t data_home(char * buf, size_t max_len) {
+size_t data_home(char * restrict buf, size_t max_len) {
     const char geminifox[] = "geminifox/";
     size_t offset = 0;
 
-    const char * xdg_data_home = getenv("XDG_DATA_HOME");
+    const char * restrict xdg_data_home = getenv("XDG_DATA_HOME");
     if (xdg_data_home != NULL) {
         offset = strcpy_len(buf, max_len, xdg_data_home);
         if (offset >= max_len) {
@@ -188,7 +188,7 @@ size_t data_home(char * buf, size_t max_len) {
         buf[offset] = '/';
         offset += 1;
     } else {
-        const char * home = getenv("HOME");
+        const char * restrict home = getenv("HOME");
         if (home == NULL) {
             fprintf(stderr, "Failed to lookup $HOME\n");
             return 0;

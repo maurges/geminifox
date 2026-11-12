@@ -54,7 +54,12 @@ struct output {
 };
 
 
-static void write_json_body(const char * field, size_t field_len, const char * message, size_t message_len) {
+static void write_json_body(
+    const char * restrict field,
+    size_t field_len,
+    const char * restrict message,
+    size_t message_len
+) {
     const char prefix[] = "{\"version\":\"" VERSION "\",\"";
     const char infix[] = "\":\"";
     const char suffix[] = "\"}";
@@ -67,22 +72,22 @@ static void write_json_body(const char * field, size_t field_len, const char * m
     fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
 }
 /// length_ll includes the null terminator for convenience
-static void write_progress_json(const char * message, size_t length_ll) {
+static void write_progress_json(const char * restrict message, size_t length_ll) {
     const char field[] = "progress";
     write_json_body(field, sizeof(field) - 1, message, length_ll - 1);
 }
-static void write_error_json(const char * message, size_t length_ll) {
+static void write_error_json(const char * restrict message, size_t length_ll) {
     const char field[] = "error";
     write_json_body(field, sizeof(field) - 1, message, length_ll - 1);
 }
-static void write_result_json(const unsigned char * message_raw, size_t length_raw) {
+static void write_result_json(const unsigned char * restrict message_raw, size_t length_raw) {
     struct bytevec r = base64_encode(message_raw, length_raw);
     const char field[] = "part";
-    write_json_body(field, sizeof(field) - 1, (const char *)r.data, r.length);
+    write_json_body(field, sizeof(field) - 1, (const char * restrict)r.data, r.length);
 }
 
 static void write_null(const char *, size_t) {}
-static void write_verbatim(const unsigned char * message, size_t length) {
+static void write_verbatim(const unsigned char * restrict message, size_t length) {
     fwrite(message, 1, length, stdout);
 }
 
@@ -95,7 +100,7 @@ struct connect_info {
     size_t request_length;
 };
 
-static int parse_url(const char * url, struct connect_info * out) {
+static int parse_url(const char * restrict url, struct connect_info * restrict out) {
     out->host = NULL;
     out->port = NULL;
     out->request = NULL;
@@ -143,7 +148,7 @@ static int parse_url(const char * url, struct connect_info * out) {
     return 0;
 }
 
-static void free_connect_info(struct connect_info * x) {
+static void free_connect_info(struct connect_info * restrict x) {
     if (x->host) {
         free(x->host);
     }
@@ -156,7 +161,7 @@ static void free_connect_info(struct connect_info * x) {
 }
 
 
-static int connect_tcp(const struct connect_info * cinfo, struct output p) {
+static int connect_tcp(const struct connect_info * restrict cinfo, struct output p) {
     int ret = -1;
     int sock = -1;
     struct addrinfo * addresses = NULL;
@@ -181,7 +186,7 @@ static int connect_tcp(const struct connect_info * cinfo, struct output p) {
     p.write_progress(ESTABLISH_CONNECTION, sizeof(ESTABLISH_CONNECTION));
     // Starting with ipv6 only
     size_t address_candidates = 0;
-    for (struct addrinfo * addr = addresses; addr != NULL; addr = addr->ai_next) {
+    for (struct addrinfo * restrict addr = addresses; addr != NULL; addr = addr->ai_next) {
         address_candidates += 1;
         if (addr->ai_family == AF_INET) {
             continue;
@@ -199,7 +204,7 @@ static int connect_tcp(const struct connect_info * cinfo, struct output p) {
     }
     // If that failed, try ipv4
     if (sock == -1) {
-        for (struct addrinfo * addr = addresses; addr != NULL; addr = addr->ai_next) {
+        for (struct addrinfo * restrict addr = addresses; addr != NULL; addr = addr->ai_next) {
             if (addr->ai_family != AF_INET) {
                 continue;
             }
@@ -275,7 +280,7 @@ static struct tls_context new_tls_context() {
 
     return c;
 }
-static void free_tls_context(struct tls_context * c) {
+static void free_tls_context(struct tls_context * restrict c) {
     mbedtls_x509_crt_free(&c->pubkey);
     mbedtls_pk_free(&c->privkey);
     mbedtls_x509_crt_free(&c->cacert);
@@ -287,8 +292,8 @@ static void free_tls_context(struct tls_context * c) {
 
 static int tls_handshake(
     int sock,
-    const char * hostname,
-    struct tls_context * c,
+    const char * restrict hostname,
+    struct tls_context * restrict c,
     bool use_key,
     struct output p
 ) {
@@ -364,7 +369,7 @@ exit:
 }
 
 /// Writes directory to buf and returns its length. Returns 0 on error
-static size_t path_for_key(const char * domain, char * buf, size_t buf_len) {
+static size_t path_for_key(const char * restrict domain, char * restrict buf, size_t buf_len) {
     int ret = -1;
 
     size_t path_off = data_home(buf, buf_len);
@@ -400,11 +405,11 @@ static size_t path_for_key(const char * domain, char * buf, size_t buf_len) {
 
 /// 0 if the key was loaded, 1 if it wasn't, other errors for mbedtls failure
 static int load_key(
-    const struct connect_info * cinfo,
-    mbedtls_pk_context * privkey,
-    mbedtls_x509_crt * pubkey,
+    const struct connect_info * restrict cinfo,
+    mbedtls_pk_context * restrict privkey,
+    mbedtls_x509_crt * restrict pubkey,
     /// A seeded rng for use with mbedtls_ctr_drbg_random
-    void * p_rng
+    void * restrict p_rng
 ) {
     int ret = -1;
 
@@ -482,12 +487,12 @@ exit:
     return ret;
 }
 
-static int fetch_gemini(const struct connect_info * cinfo, const struct output p) {
+static int fetch_gemini(const struct connect_info * restrict cinfo, const struct output p) {
     int ret = 1;
 
     struct tls_context c = new_tls_context();
     int sock = -1;
-    unsigned char * buf = NULL;
+    unsigned char * restrict buf = NULL;
 
     sock = connect_tcp(cinfo, p);
     if (sock < 0) {
@@ -573,13 +578,13 @@ exit:
     return ret;
 }
 
-static int make_certificate(FILE * cert_out, FILE * key_out) {
+static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     int ret = -1;
 
     mbedtls_entropy_context entropy;
     mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_pk_context key;
-    const mbedtls_pk_info_t * pk_info;
+    const mbedtls_pk_info_t * restrict pk_info;
     mbedtls_x509write_cert cert;
 
     mbedtls_entropy_init(&entropy);
@@ -704,7 +709,7 @@ exit:
     return ret;
 }
 
-static int keygen(const char * domain) {
+static int keygen(const char * restrict domain) {
     int ret = -1;
 
     char path[1024] = {};
@@ -730,13 +735,13 @@ static int keygen(const char * domain) {
         return -1;
     }
     memcpy(path + path_off, root, sizeof(root));
-    FILE * cert_out = fopen(path, "w");
+    FILE * restrict cert_out = fopen(path, "w");
     if (cert_out == NULL) {
         fprintf(stderr, "Failed to open %s for writing\n", path);
         return -1;
     }
     memcpy(path + path_off, root_key, sizeof(root_key));
-    FILE * key_out = fopen(path, "w");
+    FILE * restrict key_out = fopen(path, "w");
     if (key_out == NULL) {
         fprintf(stderr, "Failed to open %s for writing\n", path);
         fclose(cert_out);
@@ -772,7 +777,7 @@ int main(int argc, const char ** argv) {
     // firefox gives the path to the manifest and the path to the script. I don't care
     bool stdio_mode = argc == 1 || argc == 3;
 
-    const char * command = NULL;
+    const char * restrict command = NULL;
     if (stdio_mode) {
         fprintf(stderr, "stdio mode, awaiting command\n");
 
@@ -786,7 +791,8 @@ int main(int argc, const char ** argv) {
 
         unsigned char buf[1025];
         unsigned char buf_b64_[1500];
-        unsigned char * buf_b64 = buf_b64_; // Because we want to mutate the pointer later
+        // We mutate the pointer later, and never touch the original buf
+        unsigned char * restrict buf_b64 = buf_b64_;
 
         size_t b64_size = fread(buf_b64, 1, length, stdin);
         int err = ferror(stdin);
@@ -818,7 +824,7 @@ int main(int argc, const char ** argv) {
     }
 
     size_t action_length = 0;
-    const char * arg = NULL;
+    const char * restrict arg = NULL;
     for (; command[action_length] != '\0'; ++action_length) {
         if (command[action_length] == ' ') {
             arg = &command[action_length+1];

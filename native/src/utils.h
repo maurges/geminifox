@@ -16,7 +16,7 @@ inline struct bytevec bytevec_empty() {
     return r;
 }
 
-inline void free_bytevec(struct bytevec * vec) {
+inline void free_bytevec(struct bytevec * restrict vec) {
     if (vec->data) {
         free(vec->data);
     }
@@ -24,7 +24,7 @@ inline void free_bytevec(struct bytevec * vec) {
     vec->length = 0;
     vec->capacity = 0;
 }
-struct bytevec base64_encode(const unsigned char * data, size_t length);
+struct bytevec base64_encode(const unsigned char * restrict data, size_t length);
 
 
 struct str {
@@ -52,24 +52,24 @@ inline struct str str_of_parts(char * val, size_t len) {
 }
 
 /// Clone a string slice to a newly allocated string, and null-terminates it
-char * strclone(const char * source, size_t length);
+char * strclone(const char * restrict source, size_t length);
 /// Copy a null-terminated string and return its length
 size_t strcpy_len(char * restrict dest, size_t dest_len, const char * restrict source);
-size_t concat(char * dst, size_t argc, ...);
+size_t concat(char * restrict dst, size_t argc, ...);
 
 #define matches_literal(LIT, str, len) \
     (sizeof(LIT) - 1 == len && strncmp(LIT, str, len) == 0)
 
 
 int read_all_file(const char * restrict fname, char * restrict buf, size_t size);
-int write_all(int fd, const char * buf, size_t size);
+int write_all(int fd, const char * restrict buf, size_t size);
 // Returns:
 // 0 if exists and is writable by user
 // -1 if is not writable
 // -2 if doesn't exist
 // -3 if worse
-int is_writable(const char * dir);
+int is_writable(const char * restrict dir);
 
 /// Writes "$XDG_DATA_HOME/geminifox/" to buf, falling back to ~/.local/share
 /// Returns size of data written, or a zero value for error
-size_t data_home(char * buf, size_t max_len);
+size_t data_home(char * restrict buf, size_t max_len);

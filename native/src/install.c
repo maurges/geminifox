@@ -25,8 +25,8 @@
 static const char manifest_name[] = "geminifox.json";
 
 // Will allocate enough space to put manifest_name at the end
-static struct str find_manifest_location(const char * home, size_t home_len) {
-    char * manifest_location = NULL;
+static struct str find_manifest_location(const char * restrict home, size_t home_len) {
+    char * restrict manifest_location = NULL;
 
 #ifdef __APPLE__
     // Parts of location relative from home or global
@@ -129,7 +129,7 @@ static struct str find_bin_location() {
     }
     path.len = path_off;
     if (path.len + sizeof(bin_name) >= 1024) {
-        char * new_buf = malloc(path.len + sizeof(bin_name));
+        char * restrict new_buf = malloc(path.len + sizeof(bin_name));
         memcpy(new_buf, path.val, path.len);
         free(path.val);
         path.val = new_buf;
@@ -139,7 +139,7 @@ static struct str find_bin_location() {
     return path;
 }
 
-static int install_self_to(const char * to, const char * from) {
+static int install_self_to(const char * restrict to, const char * restrict from) {
     int ret = -1;
 
     int src_fd = 0;
@@ -181,7 +181,11 @@ exit:
     return ret;
 }
 
-static int install_manifest_to(const char * to, const char * installed_bin_name, size_t installed_bin_name_len) {
+static int install_manifest_to(
+    const char * restrict to,
+    const char * restrict installed_bin_name,
+    size_t installed_bin_name_len
+) {
     int ret = -1;
 
     int dst_fd = 0;
@@ -217,14 +221,14 @@ exit:
     return ret;
 }
 
-int interactive_install(const char * self_path, bool dry_run) {
+int interactive_install(const char * restrict self_path, bool dry_run) {
     int ret = -1;
 
     struct str manifest_location = nullstr();
     struct str binary_location = nullstr();
 
     fprintf(stderr, "Gathering install information...\n");
-    const char * home = getenv("HOME");
+    const char * restrict home = getenv("HOME");
     if (!home) {
         fprintf(stderr, "Failed to look up $HOME\n");
         goto exit;
