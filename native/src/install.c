@@ -128,6 +128,10 @@ static struct str find_bin_location() {
         return nullstr();
     }
     path.len = path_off;
+
+    // Create a directory for it
+    mkdir(path.val, 0755);
+
     if (path.len + sizeof(bin_name) >= 1024) {
         char * restrict new_buf = malloc(path.len + sizeof(bin_name));
         memcpy(new_buf, path.val, path.len);
