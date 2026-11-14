@@ -1,6 +1,6 @@
 INCLUDES = -I vendor/mbedtls/include/
 LIBS = vendor/mbedtls/library/libmbedtls.a vendor/mbedtls/library/libmbedx509.a vendor/mbedtls/library/libmbedcrypto.a
-FLAGS = -Wall -Wextra -Wpedantic -Wsign-conversion -Wshorten-64-to-32 -std=c23
+FLAGS = -Wall -Wextra -Wpedantic -Wsign-conversion -std=c23
 
 # Release mode compilation is done by setting RELEASE=target
 ifneq ($(RELEASE),)
@@ -49,5 +49,6 @@ vendor/mbedtls/:
 
 clean:
 	rm -rf build
+clean-all: clean
 	make -C vendor/mbedtls/ clean
-.PHONY: clean
+.PHONY: clean clean-all

@@ -783,6 +783,7 @@ int main(int argc, const char ** argv) {
     bool stdio_mode = argc == 1 || argc == 3;
 
     const char * restrict command = NULL;
+    unsigned char command_buf[1024];
     if (stdio_mode) {
         fprintf(stderr, "stdio mode, awaiting command\n");
 
@@ -794,7 +795,6 @@ int main(int argc, const char ** argv) {
             return 1;
         }
 
-        unsigned char buf[1024];
         unsigned char buf_b64_[1500];
         // We mutate the pointer later, and never touch the original buf
         unsigned char * restrict buf_b64 = buf_b64_;
@@ -816,14 +816,14 @@ int main(int argc, const char ** argv) {
         }
 
         size_t size = 0;
-        err = mbedtls_base64_decode(buf, sizeof(buf) - 1, &size, buf_b64, b64_size);
-        buf[size] = '\0';
+        err = mbedtls_base64_decode(command_buf, sizeof(command_buf) - 1, &size, buf_b64, b64_size);
+        command_buf[size] = '\0';
         if (err != 0) {
             fprintf(stderr, "failed to parse base64\n");
             return err;
         }
 
-        command = (const char *)buf;
+        command = (const char *)command_buf;
     } else {
         command = argv[1];
     }

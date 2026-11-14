@@ -7,7 +7,7 @@ struct bytevec {
     size_t capacity;
 };
 
-inline struct bytevec bytevec_empty() {
+static inline struct bytevec bytevec_empty() {
     struct bytevec r = {
         .data = NULL,
         .length = 0,
@@ -16,7 +16,7 @@ inline struct bytevec bytevec_empty() {
     return r;
 }
 
-inline void free_bytevec(struct bytevec * restrict vec) {
+static inline void free_bytevec(struct bytevec * restrict vec) {
     if (vec->data) {
         free(vec->data);
     }
@@ -36,14 +36,14 @@ struct str {
 };
 #define S(s) {.val = s, .len = sizeof(s) - 1}
 #define CS(s) {.cval = s, .len = sizeof(s) - 1}
-inline struct str nullstr() {
+static inline struct str nullstr() {
     struct str r = {
         .val = NULL,
         .len = 0,
     };
     return r;
 }
-inline struct str str_of_parts(char * val, size_t len) {
+static inline struct str str_of_parts(char * val, size_t len) {
     struct str r = {
         .val = val,
         .len = len,
