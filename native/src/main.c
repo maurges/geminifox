@@ -255,6 +255,7 @@ struct tls_context {
     mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
+    mbedtls_net_context server_fd;
     mbedtls_x509_crt cacert;
     mbedtls_pk_context privkey;
     mbedtls_x509_crt pubkey;
@@ -304,7 +305,7 @@ static int tls_handshake(
 ) {
     int ret = -1;
 
-    mbedtls_net_context server_fd = { .fd = sock };
+    c->server_fd.fd = sock;
 
     p.write_progress(ESTABLISH_HANDSHAKE, sizeof(ESTABLISH_HANDSHAKE));
 
@@ -351,7 +352,7 @@ static int tls_handshake(
         goto exit;
     }
     // Apply the ssl to the connection
-    mbedtls_ssl_set_bio(&c->ssl, &server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+    mbedtls_ssl_set_bio(&c->ssl, &c->server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
 
     // Perform the handshake
     while ((ret = mbedtls_ssl_handshake(&c->ssl)) != 0) {
@@ -368,6 +369,7 @@ static int tls_handshake(
 
 exit:
     if (ret != 0) {
+        fprintf(stderr, "free tls context\n");
         free_tls_context(c);
     }
     return ret;
