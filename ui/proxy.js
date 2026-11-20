@@ -525,6 +525,41 @@ function displayResponse(code, text, body, currentLocation) {
             true,
         )};
 
+    // 6X - Certificate required
+    } else if (code >= 60 && code <= 69) {
+        if (code === 61) {
+            return {body: renderStatusPage(
+                "61 Certificate not authorized",
+                ["The content at this location is not made available to you by the pod administrators"],
+                "error",
+                false,
+            )};
+        }
+
+        const title =
+            code === 62 ? "62 Certificate Not Valid" :
+            `${code} Certificate Required`;
+
+        const enableButton = document.createElement("button");
+        enableButton.innerText = "create certificate";
+        enableButton.onclick = () => alert("button that does nothing");
+        const enablePrompt = document.createElement("p");
+        enablePrompt.append(
+            "Click this button to proceed with a new certificate: ",
+            enableButton,
+        );
+        return {body: renderStatusPage(
+            title,
+            [
+                "The content you're trying to access requires a client certificate. "
+                    + "Enabling the certificate will allow this pod to recognize you",
+                enablePrompt,
+                "Leave this page if you want to remain anonymous on this pod",
+            ],
+            "progress",
+            false,
+        )}
+
     // Unknown status
     } else {
         return {body: renderStatusPage(
