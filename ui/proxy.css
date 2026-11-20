@@ -96,7 +96,7 @@ h1, h2, h3, h4, h5, h6 {
     font-size: 20px;
     font-family: sans-serif;
 
-    > div {
+    > p {
         /* Slightly smaller than parent */
         font-size: 15px;
 
@@ -104,12 +104,13 @@ h1, h2, h3, h4, h5, h6 {
         flex-direction: column;
         gap: 8px;
 
-        > button {
-            max-width: 120px;
-            /* Align to the right */
-            align-self: flex-end;
-            /* A bit of gap to not float in the space */
-            margin-right: 50px;
-        }
+    }
+
+    > button {
+        max-width: 120px;
+        /* Align to the right */
+        align-self: flex-end;
+        /* A bit of gap to not float in the space */
+        margin-right: 50px;
     }
 }

@@ -244,110 +244,131 @@ function parseHeader(bytes) {
 }
 
 /**
+ * @param {string} title
+ * @param {(string | HTMLElement | {text: string, link: string})[]} messages
+ * @param {string} className
+ * @param {boolean} reload
+ * @returns HTMLElement
+ */
+function renderStatusPage(title, messages, className, reload) {
+    const div = document.createElement("div");
+    div.classList.add(className);
+    div.innerText = title;
+
+    for (const msg of messages) {
+        if (msg instanceof HTMLElement) {
+            div.appendChild(msg);
+        } else if (typeof msg === "string") {
+            if (msg.length === 0) {
+                // Sometimes I emit empty strings for convenience
+                continue;
+            }
+            const p = document.createElement("p");
+            p.innerText = msg;
+            div.appendChild(p);
+        } else {
+            const p = document.createElement("p");
+            const a = document.createElement("a");
+            a.href = msg.link;
+            a.innerText = msg.link;
+            p.append(msg.text, a);
+            div.append(p);
+        }
+    }
+
+    if (reload) {
+        const reloadButton = document.createElement("button");
+        reloadButton.innerText = "Reload";
+        reloadButton.onclick = () => window.location.reload();
+        div.appendChild(reloadButton);
+    }
+
+    return div;
+}
+
+/**
  * @param {object} o
  * @param {number} downloadedSize
  * @returns {{show?: HTMLElement, append?: Uint8Array<ArrayBuffer>}}
  */
 function parseProgress(o, downloadedSize) {
-    const unexpected_message = "Fatal error: unexpected message from the native program";
+    const retryButton = document.createElement("button");
+    retryButton.innerText = "Reload";
+    retryButton.onclick = () => window.location.reload();
+
+    const ourProblem = [
+        {
+            text: "The error is in the native program used to access the remote pod. If you can reproduce it, please report it to us at",
+            link:  "https://github.com/maurges/geminifox",
+        },
+        "version" in o ? `The program version is ${o.version}` : "",
+    ];
+
+    const unexpected_message = "Internal error: unexpected message from the native program";
     if (typeof o !== "object") {
         // Malformed message
         console.log("unexpected message type", o);
-        const div = document.createElement("div");
-        div.classList.add("error");
-        div.innerText = unexpected_message;
-        return {show: div};
+        return {show: renderStatusPage(
+            "Internal error: unexpected message from the native program",
+            ourProblem,
+            "error",
+            true,
+        )};
     }
 
     if ("error" in o && typeof o.error === "string") {
-        const retryButton = document.createElement("button");
-        retryButton.innerText = "Reload";
-        retryButton.onclick = () => window.location.reload();
-
-        const remoteDown = () => {
-            const div = document.createElement("div");
-            const p = document.createElement("p");
-            p.innerText = "The remote host is unreachable. Maybe it doesn't exist anymore, maybe your network has a problem";
-            div.append(p, retryButton);
-            return div;
-        };
-        const ourProblem = () => {
-            const div = document.createElement("div");
-            const p = document.createElement("p");
-            const link = document.createElement("a");
-            link.href = "https://github.com/maurges/geminifox";
-            link.innerText = link.href;
-            const version = "version" in o ? `The program version is ${o.version}` : "";
-            p.append(
-                "The error is in the native program used to access the remote pod. If you can reproduce it, please report it to us at",
-                link,
-                version,
-            );
-            div.append(p, retryButton);
-            return div;
-        };
-
-        /** @type {Record<string, { text: string, hint: () => HTMLElement }>}*/
+        const internalError = (/** @type {string} */ title) => () => renderStatusPage(title, ourProblem, "error", true);
+        const remoteError = (/** @type {string} */ title) => () => renderStatusPage(
+            title,
+            ["The remote host is unreachable. Maybe it doesn't exist anymore, maybe your network has a problem"],
+            "error",
+            true
+        );
+        /** @type {Record<string, () => HTMLElement>} */
         const errors = {
-            "INTERNAL_INIT": {text: "Internal error: initialization failed", hint: ourProblem},
-            "INTERNAL_SSL_CONFIG": {text: "Internal error: SSL configuration failed", hint: ourProblem},
-            "INTERNAL_SSL_SETUP": {text: "Internal error: SSL setup failed", hint: ourProblem},
-            "INTERNAL_SSL_HOSTNAME": {text: "Internal error: SSL hostname binding failed", hint: ourProblem},
+            "INTERNAL_INIT": internalError("Internal error: initialization failed"),
+            "INTERNAL_SSL_CONFIG": internalError("Internal error: SSL configuration failed"),
+            "INTERNAL_SSL_SETUP": internalError("Internal error: SSL setup failed"),
+            "INTERNAL_SSL_HOSTNAME": internalError("Internal error: SSL hostname binding failed"),
 
-            "NATIVE_FAILED": {
-                text: "Failed to run the native program",
-                hint: () => {
-                    const div = document.createElement("div");
+            "NATIVE_FAILED": () => renderStatusPage(
+                "Failed to run the native program",
+                [
+                    {
+                        text: "Did you forget to install the native program? Download it here: ",
+                        link: "https://github.com/maurges/geminifox",
+                    },
+                    "If you're on macos, this failure can randomly happen 1 in 5 loads."
+                        + "Please refresh the page",
+                ],
+                "error",
+                true,
+            ),
 
-                    const inst = document.createElement("p");
-                    const instLink = document.createElement("a");
-                    instLink.href = "https://github.com/maurges/geminifox";
-                    instLink.innerText = instLink.href;
-                    inst.append(
-                        "Did you forget to install the native program? Download it here: ",
-                        instLink,
-                    );
-
-                    const retry = document.createElement("p");
-                    retry.innerText =
-                        "If you're on macos, this failure can randomly happen 1 in 5 loads."
-                        + "Please refresh the page";
-
-                    div.append(inst, retry, retryButton);
-                    return div;
-                },
-            },
-
-            "LOOKUP_FAILED": {text: "DNS record for the server returned empty", hint: remoteDown},
-            "CONNECT_FAILED": {text: "Failed to connect to the server", hint: remoteDown},
-            "HANDSHAKE_FAILED": {text: "TLS negotiation with the server failed", hint: remoteDown},
-            "REQUEST_FAILED": {text: "Server didn't accept the request", hint: remoteDown},
-            "RESPONSE_FAILED": {text: "Server didn't provide the response", hint: remoteDown},
-            "NETWORK_FAILED": {
-                text: "Network unreachable",
-                hint: () => {
-                    const div = document.createElement("div");
-                    const retry = document.createElement("p");
-                    retry.innerText =
-                        "There seems to be a network issue on your machine. Fix it and try again later";
-
-                    div.append(retry, retryButton);
-                    return div;
-                },
-            },
+            "LOOKUP_FAILED": remoteError("DNS record for the server returned empty"),
+            "CONNECT_FAILED": remoteError("Failed to connect to the server"),
+            "HANDSHAKE_FAILED": remoteError("TLS negotiation with the server failed"),
+            "REQUEST_FAILED": remoteError("Server didn't accept the request"),
+            "RESPONSE_FAILED": remoteError("Server didn't provide the response"),
+            "NETWORK_FAILED": () => renderStatusPage(
+                "Network unreachable",
+                ["There seems to be a network issue on your machine. Fix it and try again later"],
+                "error",
+                true,
+            ),
         };
-        const div = document.createElement("div");
-        div.classList.add("error");
-        const msg = errors[o.error];
-        if (msg) {
-            div.innerText = msg.text;
-            div.appendChild(msg.hint());
+        const page = errors[o.error];
+        if (page) {
+            return {show: page()}
         } else {
             console.log("unexpected error", o);
-            div.innerText = unexpected_message;
-            div.appendChild(ourProblem());
+            return {show: renderStatusPage(
+                unexpected_message,
+                ourProblem,
+                "error",
+                true,
+            )};
         }
-        return {show: div};
     } else if ("progress" in o && typeof o.progress === "string") {
         /** @type {Record<string, string>}*/
         const statuses = {
@@ -356,36 +377,27 @@ function parseProgress(o, downloadedSize) {
             "ESTABLISH_HANDSHAKE": "Establishing TLS with the server...",
             "SEND_REQUEST": "Sending the request...",
         };
-        const div = document.createElement("div");
-        div.classList.add("progress");
         const text = statuses[o.progress];
         if (text) {
-            div.innerText = text;
+            return {show: renderStatusPage(text, [], "progress", false)};
         } else {
-            console.log("unexpected progress", o);
-            div.innerText = unexpected_message;
+            return {show: renderStatusPage(unexpected_message, ourProblem, "progress", false)}
         }
-        return {show: div};
     } else if ("part" in o && typeof o.part === "string") {
         try {
             const resp = Uint8Array.fromBase64(o.part);
-            const div = document.createElement("div");
-            div.classList.add("progress");
-            div.innerText = "Downloaded " + (downloadedSize + resp.length).toString() + "bytes";
-            return {show: div, append: resp};
+            const text = "Downloaded " + (downloadedSize + resp.length).toString() + "bytes";
+            return {
+                append: resp,
+                show: renderStatusPage(text, [], "progress", false),
+            };
         } catch (e) {
             // Malformed message
-            const div = document.createElement("div");
-            div.classList.add("error");
-            div.innerText = unexpected_message;
-            return {show: div};
+            return {show: renderStatusPage(unexpected_message, ourProblem, "progress", false)}
         }
     } else {
         // Malformed message
-        const div = document.createElement("div");
-        div.classList.add("error");
-        div.innerText = unexpected_message;
-        return {show: div};
+        return {show: renderStatusPage(unexpected_message, ourProblem, "error", true)}
     }
 }
 
@@ -459,9 +471,12 @@ function displayResponse(code, text, body, currentLocation) {
             video.onload = () => { URL.revokeObjectURL(blobUrl) };
             return {body: video};
         } else {
-            const div = document.createElement("div");
-            div.innerText = "Unknown content type: " + text;
-            return {body: div};
+            return {body: renderStatusPage(
+                "Unknown content type: " + text,
+                ["The server provided a response that this program can't show"],
+                "error",
+                false,
+            )};
         }
 
     // 3X - Redirect
@@ -482,31 +497,42 @@ function displayResponse(code, text, body, currentLocation) {
 
     // 4X - Temporary failure
     } else if (code >= 40 && code <= 49) {
-        const div = document.createElement("div");
-        div.innerText =
+        const title =
             code === 41 ? "41 Server Unavailable" :
             code === 42 ? "42 CGI Error" :
             code === 43 ? "43 Server Proxy Error" :
             code === 44 ? "44 Too Many Requests" :
             `${code} Temporary Server Failure`;
-        return {body: div};
+        return {body: renderStatusPage(
+            title,
+            ["The remote pod responded with the temporary error. Try again later"],
+            "error",
+            true,
+        )};
 
     // 5X - Permanent failure
     } else if (code >= 50 && code <= 59) {
-        const div = document.createElement("div");
-        div.innerText =
+        const title =
             code === 51 ? "51 Not Found" :
             code === 52 ? "52 Resource No Longer Available" :
             code === 53 ? "53 Server Proxy Request Refused" :
             code === 59 ? "59 Bad Request" :
             `${code} Permanent Server Failure`;
-        return {body: div};
+        return {body: renderStatusPage(
+            title,
+            ["The remote pod responded with the permanent error. Change your request or contact the pod administrator"],
+            "error",
+            true,
+        )};
 
     // Unknown status
     } else {
-        const div = document.createElement("div");
-        div.innerText = "Malformed server reply: unknown status code " + code.toString();
-        return {body: div};
+        return {body: renderStatusPage(
+            "Malformed server reply with unknown status code " + code.toString(),
+            ["The remote pod reponded in breaking the expected protocol. Contact the pod administrator"],
+            "error",
+            true
+        )};
     }
 }
 
@@ -573,9 +599,13 @@ function handleResponse(resp, currentLocation, redirects) {
 
     const headerRepr = parseHeader(header);
     if (headerRepr === null) {
-        const div = document.createElement("div");
-        div.innerText = "Malformed server reply: can't parse header";
-        document.body.replaceChildren(div);
+        const errpage = renderStatusPage(
+            "Malformed server reply: can't parse header",
+            ["The remote pod reponded in breaking the expected protocol. Contact the pod administrator"],
+            "error",
+            true,
+        )
+        document.body.replaceChildren(errpage);
         return;
     };
 
@@ -588,39 +618,35 @@ function handleResponse(resp, currentLocation, redirects) {
     if (rendered.redirect) {
         redirects.push(rendered.redirect);
         // First do a loop check
-        if (redirects.length == 15) {
-            const uniqs = new Set(redirects);
-            if (uniqs.size < 15) {
-                const div = document.createElement("div");
-                const p = document.createElement("p");
-                p.innerText = "Redirect loop detected. Trace:";
-                div.appendChild(p);
-                const ul = document.createElement("ul");
-                for (const href of redirects) {
-                    const li = document.createElement("li");
-                    li.innerText = href;
-                    ul.appendChild(li);
-                }
-                div.appendChild(ul);
-                document.body.replaceChildren(div);
-            // No loops, continue redirecting
-            } else {
-                navigateTo(rendered.redirect, redirects);
-            }
-        // Abort if too many redirects
-        } else if (redirects.length > 30) {
-            const div = document.createElement("div");
-            const p = document.createElement("p");
-            p.innerText = "Too many redirects. Trace:";
-            div.appendChild(p);
+        const renderLoopError = () => {
             const ul = document.createElement("ul");
             for (const href of redirects) {
                 const li = document.createElement("li");
                 li.innerText = href;
                 ul.appendChild(li);
             }
-            div.appendChild(ul);
-            document.body.replaceChildren(div);
+            return renderStatusPage(
+                "Redirect loop detected",
+                [
+                    "Redirect trace:",
+                    ul,
+                    "The remote pod is likely misconfigured. Cotact its administrator"
+                ],
+                "error",
+                true,
+                );
+        };
+        if (redirects.length == 15) {
+            const uniqs = new Set(redirects);
+            if (uniqs.size < 15) {
+                document.body.replaceChildren(renderLoopError());
+            // No loops, continue redirecting
+            } else {
+                navigateTo(rendered.redirect, redirects);
+            }
+        // Abort if too many redirects
+        } else if (redirects.length > 30) {
+            document.body.replaceChildren(renderLoopError());
         // Redirect to the new page
         } else {
             navigateTo(rendered.redirect, redirects);
@@ -630,15 +656,6 @@ function handleResponse(resp, currentLocation, redirects) {
         document.body.replaceChildren(rendered.body);
         widthObserver.observe(rendered.body);
     }
-}
-
-/**
- * @param {string} message
- */
-function displayError(message) {
-    const div = document.createElement("div");
-    div.innerText = message;
-    document.body.replaceChildren(div);
 }
 
 /** Load and display a gemini url
@@ -705,12 +722,22 @@ function navigateTo(url, redirects) {
  */
 function openPage(queryPart) {
     if (!queryPart.startsWith("?")) {
-        displayError("Navigate to a gemini:// url to start");
+        document.body.replaceChildren(renderStatusPage(
+            "Navigate to a gemini:// url to start",
+            [],
+            "progress",
+            false,
+        ));
         return;
     }
     const webUrl = decodeURIComponent(queryPart.slice(1));
     if (!webUrl.startsWith("web+gemini://")) {
-        displayError(`Unknown protocol in '${webUrl}'. Navigate to a gemini:// url to start`);
+        document.body.replaceChildren(renderStatusPage(
+            `Unknown protocol in '${webUrl}'`,
+            ["Navigate to a gemini:// url to start"],
+            "error",
+            false,
+        ));
         return;
     }
     const url = webUrl.slice(4);
