@@ -75,6 +75,7 @@ static void write_json_body(
     fwrite(infix, 1, sizeof(infix) - 1, stdout);
     fwrite(message, 1, message_len, stdout);
     fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
+    fflush(stdout);
 }
 /// length_ll includes the null terminator for convenience
 static void write_progress_json(const char * restrict message, size_t length_ll) {
@@ -94,6 +95,7 @@ static void write_result_json(const unsigned char * restrict message_raw, size_t
 static void write_null(const char *, size_t) {}
 static void write_verbatim(const unsigned char * restrict message, size_t length) {
     fwrite(message, 1, length, stdout);
+    fflush(stdout);
 }
 
 
@@ -871,9 +873,14 @@ int main(int argc, const char ** argv) {
         write_json_body(field, sizeof(field) - 1, message, 0);
 
     } else if (matches_literal("debug", command, action_length)) {
-        char buf[1024] = {};
-        size_t off = data_home(buf, sizeof(buf));
-        printf("%lu: %s\n", off, buf);
+        const char msg[] = "hello";
+        write_json_body(msg, sizeof(msg) - 1, msg, sizeof(msg) - 1);
+        //sleep(5);
+        fprintf(stderr, "huh\n");
+        //sleep(5);
+        write_json_body(msg, sizeof(msg) - 1, msg, sizeof(msg) - 1);
+        //sleep(5);
+        fprintf(stderr, "huh2\n");
 
     } else {
         fprintf(stderr, "Unknown command at %s\n", command);

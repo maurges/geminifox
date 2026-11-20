@@ -260,16 +260,43 @@ function parseProgress(o, downloadedSize) {
     }
 
     if ("error" in o && typeof o.error === "string") {
-        /** @type {Record<string, { text: string, hint?: HTMLElement }>}*/
+        const retryButton = document.createElement("button");
+        retryButton.innerText = "Reload";
+        retryButton.onclick = () => window.location.reload();
+
+        const remoteDown = () => {
+            const div = document.createElement("div");
+            const p = document.createElement("p");
+            p.innerText = "The remote host is unreachable. Maybe it doesn't exist anymore, maybe your network has a problem";
+            div.append(p, retryButton);
+            return div;
+        };
+        const ourProblem = () => {
+            const div = document.createElement("div");
+            const p = document.createElement("p");
+            const link = document.createElement("a");
+            link.href = "https://github.com/maurges/geminifox";
+            link.innerText = link.href;
+            const version = "version" in o ? `The program version is ${o.version}` : "";
+            p.append(
+                "The error is in the native program used to access the remote pod. If you can reproduce it, please report it to us at",
+                link,
+                version,
+            );
+            div.append(p, retryButton);
+            return div;
+        };
+
+        /** @type {Record<string, { text: string, hint: () => HTMLElement }>}*/
         const errors = {
-            "INTERNAL_INIT": {text: "Internal error: initialization failed"},
-            "INTERNAL_SSL_CONFIG": {text: "Internal error: SSL configuration failed"},
-            "INTERNAL_SSL_SETUP": {text: "Internal error: SSL setup failed"},
-            "INTERNAL_SSL_HOSTNAME": {text: "Internal error: SSL hostname binding failed"},
+            "INTERNAL_INIT": {text: "Internal error: initialization failed", hint: ourProblem},
+            "INTERNAL_SSL_CONFIG": {text: "Internal error: SSL configuration failed", hint: ourProblem},
+            "INTERNAL_SSL_SETUP": {text: "Internal error: SSL setup failed", hint: ourProblem},
+            "INTERNAL_SSL_HOSTNAME": {text: "Internal error: SSL hostname binding failed", hint: ourProblem},
 
             "NATIVE_FAILED": {
                 text: "Failed to run the native program",
-                hint: (() => {
+                hint: () => {
                     const div = document.createElement("div");
 
                     const inst = document.createElement("p");
@@ -285,33 +312,40 @@ function parseProgress(o, downloadedSize) {
                     retry.innerText =
                         "If you're on macos, this failure can randomly happen 1 in 5 loads."
                         + "Please refresh the page";
-                    const retryButton = document.createElement("button");
-                    retryButton.innerText = "Reload";
-                    retryButton.onclick = () => window.location.reload();
 
                     div.append(inst, retry, retryButton);
                     return div;
-                })(),
+                },
             },
 
-            "NETWORK_FAILED": {text: "Network unreachable"},
-            "LOOKUP_FAILED": {text: "DNS record for the server returned empty"},
-            "CONNECT_FAILED": {text: "Failed to connect to the server"},
-            "HANDSHAKE_FAILED": {text: "TLS negotiation with the server failed"},
-            "REQUEST_FAILED": {text: "Server didn't accept the request"},
-            "RESPONSE_FAILED": {text: "Server didn't provide the response"},
+            "LOOKUP_FAILED": {text: "DNS record for the server returned empty", hint: remoteDown},
+            "CONNECT_FAILED": {text: "Failed to connect to the server", hint: remoteDown},
+            "HANDSHAKE_FAILED": {text: "TLS negotiation with the server failed", hint: remoteDown},
+            "REQUEST_FAILED": {text: "Server didn't accept the request", hint: remoteDown},
+            "RESPONSE_FAILED": {text: "Server didn't provide the response", hint: remoteDown},
+            "NETWORK_FAILED": {
+                text: "Network unreachable",
+                hint: () => {
+                    const div = document.createElement("div");
+                    const retry = document.createElement("p");
+                    retry.innerText =
+                        "There seems to be a network issue on your machine. Fix it and try again later";
+
+                    div.append(retry, retryButton);
+                    return div;
+                },
+            },
         };
         const div = document.createElement("div");
         div.classList.add("error");
         const msg = errors[o.error];
         if (msg) {
             div.innerText = msg.text;
-            if (msg.hint) {
-                div.appendChild(msg.hint);
-            }
+            div.appendChild(msg.hint());
         } else {
             console.log("unexpected error", o);
             div.innerText = unexpected_message;
+            div.appendChild(ourProblem());
         }
         return {show: div};
     } else if ("progress" in o && typeof o.progress === "string") {
