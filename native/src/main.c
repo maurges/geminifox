@@ -29,28 +29,37 @@
 
 
 ///// Error and progress values /////
-#define INTERNAL_INIT "INTERNAL_INIT"
-#define INTERNAL_SSL_CONFIG "INTERNAL_SSL_CONFIG"
-#define INTERNAL_SSL_SETUP "INTERNAL_SSL_SETUP"
-#define INTERNAL_SSL_HOSTNAME "INTERNAL_SSL_HOSTNAME"
+const struct str INTERNAL_INIT = S("INTERNAL_INIT");
+const struct str INTERNAL_SSL_CONFIG = S("INTERNAL_SSL_CONFIG");
+const struct str INTERNAL_SSL_SETUP = S("INTERNAL_SSL_SETUP");
+const struct str INTERNAL_SSL_HOSTNAME = S("INTERNAL_SSL_HOSTNAME");
+const struct str INTERNAL_MKDIR = S("INTERNAL_MKDIR_FAILED");
+const struct str INTERNAL_PATH_SIZE = S("INTERNAL_PATH_SIZE");
+const struct str INTERNAL_CERT_NAME = S("INTERNAL_CERT_NAME");
+const struct str INTERNAL_CERT_BYTES = S("INTERNAL_CERT_BYTES");
+const struct str INTERNAL_WRITE = S("INTERNAL_WRITE");
 
-#define NETWORK_FAILED "NETWORK_FAILED"
-#define LOOKUP_FAILED "LOOKUP_FAILED"
-#define CONNECT_FAILED "CONNECT_FAILED"
-#define HANDSHAKE_FAILED "HANDSHAKE_FAILED"
-#define REQUEST_FAILED "REQUEST_FAILED"
-#define RESPONSE_FAILED "RESPONSE_FAILED"
+const struct str NETWORK_FAILED = S("NETWORK_FAILED");
+const struct str LOOKUP_FAILED = S("LOOKUP_FAILED");
+const struct str CONNECT_FAILED = S("CONNECT_FAILED");
+const struct str HANDSHAKE_FAILED = S("HANDSHAKE_FAILED");
+const struct str REQUEST_FAILED = S("REQUEST_FAILED");
+const struct str RESPONSE_FAILED = S("RESPONSE_FAILED");
+const struct str KEY_MALFORMED = S("KEY_MALFORMED");
 
-#define LOOKUP_DOMAIN "LOOKUP_DOMAIN"
-#define ESTABLISH_CONNECTION "ESTABLISH_CONNECTION"
-#define ESTABLISH_HANDSHAKE "ESTABLISH_HANDSHAKE"
-#define SEND_REQUEST "SEND_REQUEST"
+const struct str LOOKUP_DOMAIN = S("LOOKUP_DOMAIN");
+const struct str ESTABLISH_CONNECTION = S("ESTABLISH_CONNECTION");
+const struct str ESTABLISH_HANDSHAKE = S("ESTABLISH_HANDSHAKE");
+const struct str SEND_REQUEST = S("SEND_REQUEST");
+const struct str KEY_MISSING = S("KEY_MISSING");
+const struct str KEY_LOADED = S("KEY_LOADED");
+const struct str KEY_CREATED = S("KEY_CREATED");
 
 
 struct output {
-    void (* write_progress) (const char * message, size_t length_ll);
-    void (* write_error) (const char * message, size_t length_ll);
-    void (* write_result) (const unsigned char * message, size_t length_ll);
+    void (* write_progress) (struct str message);
+    void (* write_error) (struct str message);
+    void (* write_result) (const unsigned char * restrict message, size_t size_ll);
 };
 
 
@@ -77,14 +86,13 @@ static void write_json_body(
     fwrite(suffix, 1, sizeof(suffix) - 1, stdout);
     fflush(stdout);
 }
-/// length_ll includes the null terminator for convenience
-static void write_progress_json(const char * restrict message, size_t length_ll) {
+static void write_progress_json(struct str message) {
     const char field[] = "progress";
-    write_json_body(field, sizeof(field) - 1, message, length_ll - 1);
+    write_json_body(field, sizeof(field) - 1, message.cval, message.len);
 }
-static void write_error_json(const char * restrict message, size_t length_ll) {
+static void write_error_json(struct str message) {
     const char field[] = "error";
-    write_json_body(field, sizeof(field) - 1, message, length_ll - 1);
+    write_json_body(field, sizeof(field) - 1, message.cval, message.len);
 }
 static void write_result_json(const unsigned char * restrict message_raw, size_t length_raw) {
     struct bytevec r = base64_encode(message_raw, length_raw);
@@ -92,7 +100,7 @@ static void write_result_json(const unsigned char * restrict message_raw, size_t
     write_json_body(field, sizeof(field) - 1, (const char * restrict)r.data, r.length);
 }
 
-static void write_null(const char *, size_t) {}
+static void write_null(struct str) {}
 static void write_verbatim(const unsigned char * restrict message, size_t length) {
     fwrite(message, 1, length, stdout);
     fflush(stdout);
@@ -174,23 +182,23 @@ static int connect_tcp(const struct connect_info * restrict cinfo, struct output
     struct addrinfo * addresses = NULL;
 
     // Lookup the domain
-    p.write_progress(LOOKUP_DOMAIN, sizeof(LOOKUP_DOMAIN));
+    p.write_progress(LOOKUP_DOMAIN);
     struct addrinfo lookup_params = { 0 };
     lookup_params.ai_family = AF_UNSPEC; // both ipv6 and ipv4
     lookup_params.ai_socktype = SOCK_STREAM; // tcp
     ret = getaddrinfo(cinfo->host, cinfo->port ? cinfo->port : "1965", &lookup_params, &addresses);
     if (ret == EAI_SYSTEM) {
         fprintf(stderr, "system error in domain lookup\n");
-            p.write_error(NETWORK_FAILED, sizeof(NETWORK_FAILED));
+        p.write_error(NETWORK_FAILED);
         goto exit;
     } else if (ret != 0) {
         fprintf(stderr, "getaddrinfo failed with %d\n", ret);
-        p.write_error(LOOKUP_FAILED, sizeof(LOOKUP_FAILED));
+        p.write_error(LOOKUP_FAILED);
         goto exit;
     }
 
     // Try to connect to all returned addrs in sequence
-    p.write_progress(ESTABLISH_CONNECTION, sizeof(ESTABLISH_CONNECTION));
+    p.write_progress(ESTABLISH_CONNECTION);
     // Starting with ipv6 only
     size_t address_candidates = 0;
     for (struct addrinfo * restrict addr = addresses; addr != NULL; addr = addr->ai_next) {
@@ -230,7 +238,7 @@ static int connect_tcp(const struct connect_info * restrict cinfo, struct output
     // If that failed too, abort
     if (sock == -1) {
         fprintf(stderr, "failed to connect to any of %lu addresses\n", address_candidates);
-        p.write_error(CONNECT_FAILED, sizeof(CONNECT_FAILED));
+        p.write_error(CONNECT_FAILED);
         ret = -1;
         goto exit;
     }
@@ -309,7 +317,7 @@ static int tls_handshake(
 
     c->server_fd.fd = sock;
 
-    p.write_progress(ESTABLISH_HANDSHAKE, sizeof(ESTABLISH_HANDSHAKE));
+    p.write_progress(ESTABLISH_HANDSHAKE);
 
     // Setup tls config
     ret = mbedtls_ssl_config_defaults(
@@ -320,7 +328,7 @@ static int tls_handshake(
     );
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_config_defaults failed with %d\n", ret);
-        p.write_error(INTERNAL_SSL_CONFIG, sizeof(INTERNAL_SSL_CONFIG));
+        p.write_error(INTERNAL_SSL_CONFIG);
         goto exit;
     }
 
@@ -334,7 +342,7 @@ static int tls_handshake(
         ret = mbedtls_ssl_conf_own_cert(&c->conf, &c->pubkey, &c->privkey);
         if (ret != 0) {
             fprintf(stderr, "mbedtls_ssl_conf_own_cert failed with %d\n", ret);
-            p.write_error(INTERNAL_SSL_CONFIG, sizeof(INTERNAL_SSL_CONFIG));
+            p.write_error(INTERNAL_SSL_CONFIG);
             goto exit;
         }
     }
@@ -343,14 +351,14 @@ static int tls_handshake(
     ret = mbedtls_ssl_setup(&c->ssl, &c->conf);
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_setup failed with %d\n", ret);
-        p.write_error(INTERNAL_SSL_SETUP, sizeof(INTERNAL_SSL_SETUP));
+        p.write_error(INTERNAL_SSL_SETUP);
         goto exit;
     }
     // Set the hostname on ssl
     ret = mbedtls_ssl_set_hostname(&c->ssl, hostname);
     if (ret != 0) {
         fprintf(stderr, "mbedtls_ssl_set_hostname failed with code %d\n", ret);
-        p.write_error(INTERNAL_SSL_HOSTNAME, sizeof(INTERNAL_SSL_HOSTNAME));
+        p.write_error(INTERNAL_SSL_HOSTNAME);
         goto exit;
     }
     // Apply the ssl to the connection
@@ -364,7 +372,7 @@ static int tls_handshake(
                 "mbedtls_ssl_handshake failed with %d\n",
                 ret
             );
-            p.write_error(HANDSHAKE_FAILED, sizeof(HANDSHAKE_FAILED));
+            p.write_error(HANDSHAKE_FAILED);
             goto exit;
         }
     }
@@ -418,7 +426,8 @@ static int load_key(
     mbedtls_pk_context * restrict privkey,
     mbedtls_x509_crt * restrict pubkey,
     /// A seeded rng for use with mbedtls_ctr_drbg_random
-    void * restrict p_rng
+    void * restrict p_rng,
+    struct output p
 ) {
     int ret = -1;
 
@@ -430,15 +439,18 @@ static int load_key(
     size_t path_off = path_for_key(cinfo->host, path, sizeof(path));
     if (path_off == 0) {
         fprintf(stderr, "Failed to access the directory with certificates\n");
+        p.write_progress(KEY_MISSING);
         ret = 1;
         goto exit;
     }
     if (path_off + sizeof(root_key) >= sizeof(path)) {
         fprintf(stderr, "Internal: requested path is too large\n");
+        p.write_error(INTERNAL_PATH_SIZE);
         return -1;
     }
     if (is_writable(path) <= -2) {
         fprintf(stderr, "Key for %s doesn't exist\n", cinfo->host);
+        p.write_progress(KEY_MISSING);
         ret = 1;
         goto exit;
     }
@@ -464,6 +476,7 @@ static int load_key(
     if (ret != 0) {
         mbedtls_strerror(ret, buf, sizeof(buf));
         fprintf(stderr, "Failed to parse private key at %s, code %d: %s\n", path, ret, buf);
+        p.write_error(KEY_MALFORMED);
         goto exit;
     }
 
@@ -488,10 +501,12 @@ static int load_key(
             ret,
             buf
         );
+        p.write_error(KEY_MALFORMED);
         goto exit;
     }
 
     fprintf(stderr, "Loaded key for %s\n", cinfo->host);
+    p.write_progress(KEY_LOADED);
 exit:
     return ret;
 }
@@ -508,7 +523,7 @@ static int fetch_gemini(const struct connect_info * restrict cinfo, const struct
         goto exit;
     }
 
-    ret = load_key(cinfo, &c.privkey, &c.pubkey, &c.ctr_drbg);
+    ret = load_key(cinfo, &c.privkey, &c.pubkey, &c.ctr_drbg, p);
     if (ret != 0 && ret != 1) {
         goto exit;
     }
@@ -523,7 +538,7 @@ static int fetch_gemini(const struct connect_info * restrict cinfo, const struct
     // Will maybe add the check against a saved cert, but for now w/e
 
     // Write the request
-    p.write_progress(SEND_REQUEST, sizeof(SEND_REQUEST));
+    p.write_progress(SEND_REQUEST);
     while (true) {
         ret = mbedtls_ssl_write(&c.ssl, cinfo->request, cinfo->request_length);
         if (ret > 0 && (size_t)ret == cinfo->request_length) {
@@ -543,7 +558,7 @@ static int fetch_gemini(const struct connect_info * restrict cinfo, const struct
             } else {
                 fprintf(stderr, "mbedtls_ssl_write failed with code %d\n", ret);
             }
-            p.write_error(REQUEST_FAILED, sizeof(REQUEST_FAILED));
+            p.write_error(REQUEST_FAILED);
             goto exit;
         }
     }
@@ -570,7 +585,7 @@ static int fetch_gemini(const struct connect_info * restrict cinfo, const struct
             p.write_result(buf, (size_t)ret);
         } else {
             fprintf(stderr, "mbedtls_ssl_read failed with code %d\n", ret);
-            p.write_error(RESPONSE_FAILED, sizeof(RESPONSE_FAILED));
+            p.write_error(RESPONSE_FAILED);
             goto exit;
         }
     }
@@ -587,7 +602,7 @@ exit:
     return ret;
 }
 
-static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
+static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out, struct output p) {
     int ret = -1;
 
     mbedtls_entropy_context entropy;
@@ -613,6 +628,7 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     );
     if (ret != 0) {
         fprintf(stderr, "Failed to init randomness\n");
+        p.write_error(INTERNAL_INIT);
         goto exit;
     }
 
@@ -620,6 +636,7 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     ret = mbedtls_pk_setup(&key, pk_info);
     if (ret != 0) {
         fprintf(stderr, "Failed to setup ecdsa key\n");
+        p.write_error(INTERNAL_SSL_CONFIG);
         goto exit;
     }
     ret = mbedtls_ecp_gen_key(
@@ -636,6 +653,7 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     ret = mbedtls_x509write_crt_set_serial_raw(&cert, (unsigned char *)"\x01", 1);
     if (ret != 0) {
         fprintf(stderr, "Failed to set static serial\n");
+        p.write_error(INTERNAL_SSL_CONFIG);
         goto exit;
     }
 
@@ -652,6 +670,7 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     ret = mbedtls_x509write_crt_set_validity(&cert, not_before, not_after);
     if (ret != 0) {
         fprintf(stderr, "Failed to set cert validity\n");
+        p.write_error(INTERNAL_SSL_CONFIG);
         goto exit;
     }
 
@@ -659,11 +678,13 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     ret = mbedtls_x509write_crt_set_subject_name(&cert, dn);
     if (ret != 0) {
         fprintf(stderr, "Failed to set cert dn for subject\n");
+        p.write_error(INTERNAL_CERT_NAME);
         goto exit;
     }
     ret = mbedtls_x509write_crt_set_issuer_name(&cert, dn);
     if (ret != 0) {
         fprintf(stderr, "Failed to set cert dn for issuer\n");
+        p.write_error(INTERNAL_CERT_NAME);
         goto exit;
     }
 
@@ -672,6 +693,7 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     ret = mbedtls_x509write_crt_set_basic_constraints(&cert, /* is_ca */ false, -1);
     if (ret != 0) {
         fprintf(stderr, "Failed to set basic constraints\n");
+        p.write_error(INTERNAL_CERT_NAME);
         goto exit;
     }
 
@@ -686,6 +708,7 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     );
     if (ret != 0) {
         fprintf(stderr, "Failed to create certificate bytes\n");
+        p.write_error(INTERNAL_CERT_BYTES);
         goto exit;
     }
     size_t pem_bytes_len = strlen((char *)pem_bytes);
@@ -693,12 +716,14 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     ret = write_all(fileno(cert_out), (char *)pem_bytes, pem_bytes_len);
     if (ret != 0) {
         fprintf(stderr, "Failed to write cert bytes to file\n");
+        p.write_error(INTERNAL_WRITE);
         goto exit;
     }
 
     ret = mbedtls_pk_write_key_pem(&key, pem_bytes, sizeof(pem_bytes));
     if (ret != 0) {
         fprintf(stderr, "Failed to create key bytes\n");
+        p.write_error(INTERNAL_CERT_BYTES);
         goto exit;
     }
     pem_bytes_len = strlen((char *)pem_bytes);
@@ -706,6 +731,7 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out) {
     ret = write_all(fileno(key_out), (char *)pem_bytes, pem_bytes_len);
     if (ret != 0) {
         fprintf(stderr, "Failed to write key bytes to file\n");
+        p.write_error(INTERNAL_WRITE);
         goto exit;
     }
 
@@ -718,7 +744,7 @@ exit:
     return ret;
 }
 
-static int keygen(const char * restrict domain) {
+static int keygen(const char * restrict domain, const struct output p) {
     int ret = -1;
 
     char path[1024] = {};
@@ -731,6 +757,7 @@ static int keygen(const char * restrict domain) {
             // Maybe we disallow this in the future
         } else {
             fprintf(stderr, "Failed to create %s\n", path);
+            p.write_error(INTERNAL_MKDIR);
             return ret;
         }
     }
@@ -741,6 +768,7 @@ static int keygen(const char * restrict domain) {
     const char root_key[] = "root.key.pem";
     if (path_off + sizeof(root_key) >= sizeof(path)) {
         fprintf(stderr, "Internal: requested path is too large\n");
+        p.write_error(INTERNAL_PATH_SIZE);
         return -1;
     }
     memcpy(path + path_off, root, sizeof(root));
@@ -753,11 +781,12 @@ static int keygen(const char * restrict domain) {
     FILE * restrict key_out = fopen(path, "w");
     if (key_out == NULL) {
         fprintf(stderr, "Failed to open %s for writing\n", path);
+        p.write_error(INTERNAL_WRITE);
         fclose(cert_out);
         return -1;
     }
 
-    ret = make_certificate(cert_out, key_out);
+    ret = make_certificate(cert_out, key_out, p);
     fclose(cert_out);
     fclose(key_out);
     if (ret != 0) {
@@ -765,6 +794,7 @@ static int keygen(const char * restrict domain) {
         return -1;
     }
 
+    p.write_progress(KEY_CREATED);
     return 0;
 }
 
@@ -785,6 +815,17 @@ int main(int argc, const char ** argv) {
 
     // firefox gives the path to the manifest and the path to the script. I don't care
     bool stdio_mode = argc == 1 || argc == 3;
+
+    struct output print = {
+        .write_error = write_null,
+        .write_progress = write_null,
+        .write_result = write_verbatim,
+    };
+    if (stdio_mode) {
+        print.write_error = write_error_json;
+        print.write_progress = write_progress_json;
+        print.write_result = write_result_json;
+    }
 
     const char * restrict command = NULL;
     unsigned char command_buf[1024];
@@ -850,22 +891,11 @@ int main(int argc, const char ** argv) {
             return ret;
         }
 
-        struct output print = {
-            .write_error = write_null,
-            .write_progress = write_null,
-            .write_result = write_verbatim,
-        };
-        if (stdio_mode) {
-            print.write_error = write_error_json;
-            print.write_progress = write_progress_json;
-            print.write_result = write_result_json;
-        }
-
         ret = fetch_gemini(&c, print);
         free_connect_info(&c);
 
     } else if (matches_literal("keygen", command, action_length)) {
-        ret = keygen(arg);
+        ret = keygen(arg, print);
 
     } else if (matches_literal("version", command, action_length)) {
         const char field[] = "lazy impl";
@@ -873,14 +903,7 @@ int main(int argc, const char ** argv) {
         write_json_body(field, sizeof(field) - 1, message, 0);
 
     } else if (matches_literal("debug", command, action_length)) {
-        const char msg[] = "hello";
-        write_json_body(msg, sizeof(msg) - 1, msg, sizeof(msg) - 1);
-        //sleep(5);
-        fprintf(stderr, "huh\n");
-        //sleep(5);
-        write_json_body(msg, sizeof(msg) - 1, msg, sizeof(msg) - 1);
-        //sleep(5);
-        fprintf(stderr, "huh2\n");
+        fprintf(stderr, "all works now, be happy\n");
 
     } else {
         fprintf(stderr, "Unknown command at %s\n", command);

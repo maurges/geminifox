@@ -292,13 +292,14 @@ function renderStatusPage(title, messages, className, reload) {
  * @returns {{show?: HTMLElement, append?: Uint8Array<ArrayBuffer>}}
  */
 function parseProgress(o, downloadedSize) {
+    console.log("parse progress", o);
     const retryButton = document.createElement("button");
     retryButton.innerText = "Reload";
     retryButton.onclick = () => window.location.reload();
 
     const ourProblem = [
         {
-            text: "The error is in the native program used to access the remote pod. If you can reproduce it, please report it to us at",
+            text: "The error is in the native program used to access the remote pod. If you can reproduce it, please report it to us at ",
             link:  "https://github.com/maurges/geminifox",
         },
         "version" in o ? `The program version is ${o.version}` : "",
@@ -330,6 +331,11 @@ function parseProgress(o, downloadedSize) {
             "INTERNAL_SSL_CONFIG": internalError("Internal error: SSL configuration failed"),
             "INTERNAL_SSL_SETUP": internalError("Internal error: SSL setup failed"),
             "INTERNAL_SSL_HOSTNAME": internalError("Internal error: SSL hostname binding failed"),
+            "INTERNAL_MKDIR": internalError("Internal error: failed to create data directory"),
+            "INTERNAL_PATH_SIZE": internalError("Internal error: the URL + tmpdir path is too large"),
+            "INTERNAL_CERT_NAME": internalError("Internal error: failed to set name for the SSL certificate"),
+            "INTERNAL_CERT_BYTES": internalError("Internal error: SSL certificate can't be produced"),
+            "INTERNAL_WRITE": internalError("Internal error: failed to write persistent data"),
 
             "NATIVE_FAILED": () => renderStatusPage(
                 "Failed to run the native program",
@@ -338,7 +344,7 @@ function parseProgress(o, downloadedSize) {
                         text: "Did you forget to install the native program? Download it here: ",
                         link: "https://github.com/maurges/geminifox",
                     },
-                    "If you're on macos, this failure can randomly happen 1 in 5 loads."
+                    "If you're on macos, this failure can randomly happen 1 in 5 loads. "
                         + "Please refresh the page",
                 ],
                 "error",
@@ -353,6 +359,17 @@ function parseProgress(o, downloadedSize) {
             "NETWORK_FAILED": () => renderStatusPage(
                 "Network unreachable",
                 ["There seems to be a network issue on your machine. Fix it and try again later"],
+                "error",
+                true,
+            ),
+            "KEY_MALFORMED": () => renderStatusPage(
+                "Client certificate malformed",
+                [
+                    "You have previously selected to save a client certificate for this pod, "
+                        + "and this certificate has become corrupted. "
+                        + "This might be a disk error or another process fiddling the files",
+                    ...ourProblem
+                ],
                 "error",
                 true,
             ),
@@ -376,6 +393,8 @@ function parseProgress(o, downloadedSize) {
             "ESTABLISH_CONNECTION": "Connecting to the server...",
             "ESTABLISH_HANDSHAKE": "Establishing TLS with the server...",
             "SEND_REQUEST": "Sending the request...",
+            "KEY_LOADED": "Loaded the client TLS certificate...",
+            "KEY_CREATED": "Created the client TLS certificate!",
         };
         const text = statuses[o.progress];
         if (text) {
@@ -750,6 +769,18 @@ function navigateTo(url, redirects) {
     const messageArray = (new TextEncoder()).encode(command);
     const messageB64 = messageArray.toBase64();
     port.postMessage(messageB64);
+}
+
+/** Ask the native program to create the key
+ * @param {string} requestUrl - url for which this key is requested, will be transformed to domain
+ */
+function createKey(requestUrl) {
+    const port = browser.runtime.connect();
+    const url = URL.parse(requestUrl);
+    if (url === null || url.protocol !== "gemini:") {
+        panic("Attempting keygen for a bad url")
+    }
+    const command = "keygen " + url;
 }
 
 /** Open a url provided by the query param to the extension
