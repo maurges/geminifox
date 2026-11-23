@@ -289,7 +289,7 @@ function renderStatusPage(title, messages, className, reload) {
 /**
  * @param {object} o
  * @param {number} downloadedSize
- * @returns {{show?: HTMLElement, append?: Uint8Array<ArrayBuffer>}}
+ * @returns {{show?: HTMLElement, append?: Uint8Array<ArrayBuffer>, success?: boolean}}
  */
 function parseProgress(o, downloadedSize) {
     console.log("parse progress", o);
@@ -336,6 +336,8 @@ function parseProgress(o, downloadedSize) {
             "INTERNAL_CERT_NAME": internalError("Internal error: failed to set name for the SSL certificate"),
             "INTERNAL_CERT_BYTES": internalError("Internal error: SSL certificate can't be produced"),
             "INTERNAL_WRITE": internalError("Internal error: failed to write persistent data"),
+            "INTERNAL_COMMAND_READ": internalError("Internal error: failed to read the command from firefox"),
+            "INTERNAL_COMMAND_PARSE": internalError("Internal error: failed to parse the command from firefox"),
 
             "NATIVE_FAILED": () => renderStatusPage(
                 "Failed to run the native program",
@@ -346,6 +348,7 @@ function parseProgress(o, downloadedSize) {
                     },
                     "If you're on macos, this failure can randomly happen 1 in 5 loads. "
                         + "Please refresh the page",
+                    ...ourProblem
                 ],
                 "error",
                 true,
@@ -356,6 +359,12 @@ function parseProgress(o, downloadedSize) {
             "HANDSHAKE_FAILED": remoteError("TLS negotiation with the server failed"),
             "REQUEST_FAILED": remoteError("Server didn't accept the request"),
             "RESPONSE_FAILED": remoteError("Server didn't provide the response"),
+            "BAD_URL": () => renderStatusPage(
+                "Bad URL",
+                ["The URL you supplied is invalid for accessing gemini pods"],
+                "error",
+                false
+            ),
             "NETWORK_FAILED": () => renderStatusPage(
                 "Network unreachable",
                 ["There seems to be a network issue on your machine. Fix it and try again later"],
@@ -397,8 +406,10 @@ function parseProgress(o, downloadedSize) {
             "KEY_CREATED": "Created the client TLS certificate!",
         };
         const text = statuses[o.progress];
+        // A bit of a hack, maybe I'll want to transmit success messages some other way. For fetch too
+        const success = o.progress === "KEY_CREATED";
         if (text) {
-            return {show: renderStatusPage(text, [], "progress", false)};
+            return {show: renderStatusPage(text, [], "progress", false), success};
         } else {
             return {show: renderStatusPage(unexpected_message, ourProblem, "progress", false)}
         }
@@ -561,7 +572,7 @@ function displayResponse(code, text, body, currentLocation) {
 
         const enableButton = document.createElement("button");
         enableButton.innerText = "create certificate";
-        enableButton.onclick = () => alert("button that does nothing");
+        enableButton.onclick = () => createKey(currentLocation);
         const enablePrompt = document.createElement("p");
         enablePrompt.append(
             "Click this button to proceed with a new certificate: ",
@@ -772,15 +783,38 @@ function navigateTo(url, redirects) {
 }
 
 /** Ask the native program to create the key
- * @param {string} requestUrl - url for which this key is requested, will be transformed to domain
+ * @param {string} requestUrl - url for which this key is requested, of which only domain matters
  */
 function createKey(requestUrl) {
     const port = browser.runtime.connect();
-    const url = URL.parse(requestUrl);
-    if (url === null || url.protocol !== "gemini:") {
-        panic("Attempting keygen for a bad url")
+    let didSucceed = false;
+    /**
+     * @param {object} resp
+     */
+    function responseReceived(resp) {
+        const r = parseProgress(resp, 0);
+        if ("show" in r) {
+            document.body.replaceChildren(r.show);
+        }
+        if ("success" in r && r.success) {
+            didSucceed = true;
+        }
     }
-    const command = "keygen " + url;
+    function responseFinished() {
+        if (didSucceed) {
+            // Now open the target page and show it
+            navigateTo(requestUrl, []);
+        }
+        // Didn't succeed. There must have been an error that we receive before
+        // and are currently showing
+    }
+    port.onMessage.addListener(responseReceived);
+    port.onDisconnect.addListener(responseFinished);
+
+    const command = "keygen " + requestUrl;
+    const messageArray = (new TextEncoder()).encode(command);
+    const messageB64 = messageArray.toBase64();
+    port.postMessage(messageB64);
 }
 
 /** Open a url provided by the query param to the extension

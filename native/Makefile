@@ -47,6 +47,10 @@ vendor/mbedtls/:
 	git submodule update --init --recursive
 
 
+install: build/geminifox-native
+	$< --install
+
+
 clean:
 	rm -rf build
 clean-all: clean

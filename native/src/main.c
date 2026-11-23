@@ -38,6 +38,8 @@ const struct str INTERNAL_PATH_SIZE = S("INTERNAL_PATH_SIZE");
 const struct str INTERNAL_CERT_NAME = S("INTERNAL_CERT_NAME");
 const struct str INTERNAL_CERT_BYTES = S("INTERNAL_CERT_BYTES");
 const struct str INTERNAL_WRITE = S("INTERNAL_WRITE");
+const struct str INTERNAL_COMMAND_READ = S("INTERNAL_COMMAND_READ");
+const struct str INTERNAL_COMMAND_PARSE = S("INTERNAL_COMMAND_PARSE");
 
 const struct str NETWORK_FAILED = S("NETWORK_FAILED");
 const struct str LOOKUP_FAILED = S("LOOKUP_FAILED");
@@ -47,6 +49,7 @@ const struct str REQUEST_FAILED = S("REQUEST_FAILED");
 const struct str RESPONSE_FAILED = S("RESPONSE_FAILED");
 const struct str KEY_MALFORMED = S("KEY_MALFORMED");
 
+const struct str BAD_URL = S("BAD_URL");
 const struct str LOOKUP_DOMAIN = S("LOOKUP_DOMAIN");
 const struct str ESTABLISH_CONNECTION = S("ESTABLISH_CONNECTION");
 const struct str ESTABLISH_HANDSHAKE = S("ESTABLISH_HANDSHAKE");
@@ -430,8 +433,6 @@ static int load_key(
     struct output p
 ) {
     int ret = -1;
-
-    (void)cinfo;
 
     char path[1024] = {};
     const char root[] = "root.pem";
@@ -837,6 +838,7 @@ int main(int argc, const char ** argv) {
         size_t length_read = fread(&length, sizeof(length), 1, stdin);
         if (length_read != 1) {
             fprintf(stderr, "error reading data\n");
+            print.write_error(INTERNAL_COMMAND_READ);
             return 1;
         }
 
@@ -848,6 +850,7 @@ int main(int argc, const char ** argv) {
         int err = ferror(stdin);
         if (err != 0) {
             fprintf(stderr, "error reading data\n");
+            print.write_error(INTERNAL_COMMAND_READ);
             return 1;
         }
         // strip trailing whitespace
@@ -865,6 +868,7 @@ int main(int argc, const char ** argv) {
         command_buf[size] = '\0';
         if (err != 0) {
             fprintf(stderr, "failed to parse base64\n");
+            print.write_error(INTERNAL_COMMAND_PARSE);
             return err;
         }
 
@@ -887,6 +891,7 @@ int main(int argc, const char ** argv) {
         ret = parse_url(arg, &c);
         if (ret != 0) {
             fprintf(stderr, "Failed to parse url\n");
+            print.write_error(BAD_URL);
             free_connect_info(&c);
             return ret;
         }
@@ -895,7 +900,17 @@ int main(int argc, const char ** argv) {
         free_connect_info(&c);
 
     } else if (matches_literal("keygen", command, action_length)) {
-        ret = keygen(arg, print);
+        struct connect_info c;
+        ret = parse_url(arg, &c);
+        if (ret != 0) {
+            fprintf(stderr, "Failed to parse url\n");
+            print.write_error(BAD_URL);
+            free_connect_info(&c);
+            return ret;
+        }
+
+        ret = keygen(c.host, print);
+        free_connect_info(&c);
 
     } else if (matches_literal("version", command, action_length)) {
         const char field[] = "lazy impl";
@@ -907,6 +922,7 @@ int main(int argc, const char ** argv) {
 
     } else {
         fprintf(stderr, "Unknown command at %s\n", command);
+        print.write_error(INTERNAL_COMMAND_PARSE);
     }
 
     return ret;
