@@ -681,7 +681,22 @@ function handleResponse(resp, currentLocation, redirects) {
     }
 
     if (rendered.redirect) {
-        redirects.push(rendered.redirect);
+        // Normalize the relative urls into absolute
+        const redirectUrl = URL.parse(rendered.redirect, currentLocation);
+        if (redirectUrl === null) {
+            return renderStatusPage(
+                "Bad redirect detected",
+                [
+                    "The remote pod has attempted to redirect you to "
+                        + rendered.redirect
+                        + ", which is not a correct gemini URL"
+                ],
+                "error",
+                false,
+            )
+        }
+        const redirect = redirectUrl.toString();
+        redirects.push(redirect);
         // First do a loop check
         const renderLoopError = () => {
             const ul = document.createElement("ul");
@@ -707,14 +722,14 @@ function handleResponse(resp, currentLocation, redirects) {
                 document.body.replaceChildren(renderLoopError());
             // No loops, continue redirecting
             } else {
-                navigateTo(rendered.redirect, redirects);
+                navigateTo(redirect, redirects);
             }
         // Abort if too many redirects
         } else if (redirects.length > 30) {
             document.body.replaceChildren(renderLoopError());
         // Redirect to the new page
         } else {
-            navigateTo(rendered.redirect, redirects);
+            navigateTo(redirect, redirects);
         }
     // No redirects, render the page
     } else {
