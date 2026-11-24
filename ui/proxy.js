@@ -58,13 +58,13 @@ function adjustHref(href, currentLocation) {
 /**
  * @param {Uint8Array} bytes
  * @param {string} currentLocation - used to replace hrefs to gemini
- * @returns {{article: HTMLElement, title: string | null }}
+ * @returns {{article: HTMLElement, title: string | undefined }}
  */
 function parseGemtext(bytes, currentLocation) {
     const dec = new TextDecoder();
 
     const article = document.createElement("article");
-    let title = null;
+    let title = undefined;
 
     let i = 0;
 
@@ -416,7 +416,7 @@ function parseProgress(o, downloadedSize) {
     } else if ("part" in o && typeof o.part === "string") {
         try {
             const resp = Uint8Array.fromBase64(o.part);
-            const text = "Downloaded " + (downloadedSize + resp.length).toString() + "bytes";
+            const text = "Downloaded " + (downloadedSize + resp.length).toString() + " bytes";
             return {
                 append: resp,
                 show: renderStatusPage(text, [], "progress", false),
@@ -436,7 +436,7 @@ function parseProgress(o, downloadedSize) {
  * @param {string} text - header text
  * @param {Uint8Array<ArrayBuffer>} body
  * @param {string} currentLocation
- * @returns {{body: HTMLElement, title?: string | null, redirect?: string}}
+ * @returns {{body: HTMLElement, title?: string | undefined, redirect?: string}}
  */
 function displayResponse(code, text, body, currentLocation) {
     // 1X - Input required
@@ -718,6 +718,14 @@ function handleResponse(resp, currentLocation, redirects) {
         }
     // No redirects, render the page
     } else {
+        // The currentLocation is a gemini url, but we want to remember the
+        // prefixed version in history for firefox to navigate properly
+        const fixedLocation = currentLocation.startsWith("web+")
+            ? currentLocation : "web+" + currentLocation;
+        browser.history.addUrl({
+            url: fixedLocation,
+            title: rendered.title,
+        })
         document.body.replaceChildren(rendered.body);
         widthObserver.observe(rendered.body);
     }
@@ -779,6 +787,7 @@ function navigateTo(url, redirects) {
     const command = "fetch " + url;
     const messageArray = (new TextEncoder()).encode(command);
     const messageB64 = messageArray.toBase64();
+    console.log("fetching", messageB64);
     port.postMessage(messageB64);
 }
 

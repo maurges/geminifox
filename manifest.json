@@ -12,6 +12,7 @@
     }
 , "permissions":
     [ "nativeMessaging"
+    , "history"
     ]
 
 , "protocol_handlers":
