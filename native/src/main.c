@@ -268,7 +268,6 @@ struct tls_context {
     mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
-    mbedtls_net_context server_fd;
     mbedtls_x509_crt cacert;
     mbedtls_pk_context privkey;
     mbedtls_x509_crt pubkey;
@@ -309,6 +308,41 @@ static void free_tls_context(struct tls_context * restrict c) {
     mbedtls_entropy_free(&c->entropy);
 }
 
+// Adapted from from mbedtls_net_send
+static int tls_send_callback(void * context, const unsigned char * buf, size_t length) {
+    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
+    int fd = (int)(intptr_t)context;
+
+    ret = (int)write(fd, buf, length);
+    if (ret < 0) {
+        if (errno == EPIPE || errno == ECONNRESET) {
+            return MBEDTLS_ERR_NET_CONN_RESET;
+        } else if (errno == EINTR) {
+            return MBEDTLS_ERR_SSL_WANT_WRITE;
+        } else {
+            return MBEDTLS_ERR_NET_SEND_FAILED;
+        }
+    }
+    return ret;
+}
+// Adapted from from mbedtls_net_recv
+static int tls_recv_callback(void * context, unsigned char * buf, size_t length) {
+    int ret = MBEDTLS_ERR_ERROR_CORRUPTION_DETECTED;
+    int fd = (int)(intptr_t)context;
+
+    ret = (int)read(fd, buf, length);
+    if (ret < 0) {
+        if (errno == EPIPE || errno == ECONNRESET) {
+            return MBEDTLS_ERR_NET_CONN_RESET;
+        } else if (errno == EINTR) {
+            return MBEDTLS_ERR_SSL_WANT_READ;
+        } else {
+            return MBEDTLS_ERR_NET_RECV_FAILED;
+        }
+    }
+    return ret;
+}
+
 static int tls_handshake(
     int sock,
     const char * restrict hostname,
@@ -317,8 +351,6 @@ static int tls_handshake(
     struct output p
 ) {
     int ret = -1;
-
-    c->server_fd.fd = sock;
 
     p.write_progress(ESTABLISH_HANDSHAKE);
 
@@ -365,7 +397,7 @@ static int tls_handshake(
         goto exit;
     }
     // Apply the ssl to the connection
-    mbedtls_ssl_set_bio(&c->ssl, &c->server_fd, mbedtls_net_send, mbedtls_net_recv, NULL);
+    mbedtls_ssl_set_bio(&c->ssl, (void *)(intptr_t)sock, tls_send_callback, tls_recv_callback, NULL);
 
     // Perform the handshake
     while ((ret = mbedtls_ssl_handshake(&c->ssl)) != 0) {
@@ -475,8 +507,7 @@ static int load_key(
         p_rng
     );
     if (ret != 0) {
-        mbedtls_strerror(ret, buf, sizeof(buf));
-        fprintf(stderr, "Failed to parse private key at %s, code %d: %s\n", path, ret, buf);
+        fprintf(stderr, "Failed to parse private key at %s, code %d\n", path, ret);
         p.write_error(KEY_MALFORMED);
         goto exit;
     }
@@ -494,13 +525,11 @@ static int load_key(
         buf_len + 1 // including the terminator
     );
     if (ret != 0) {
-        mbedtls_strerror(ret, buf, sizeof(buf));
         fprintf(
             stderr,
-            "Failed to parse public certificate at %s, code %d: %s\n",
+            "Failed to parse public certificate at %s, code %d\n",
             path,
-            ret,
-            buf
+            ret
         );
         p.write_error(KEY_MALFORMED);
         goto exit;
