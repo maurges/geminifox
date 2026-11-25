@@ -467,8 +467,8 @@ static int load_key(
     int ret = -1;
 
     char path[1024] = {};
-    const char root[] = "root.pem";
-    const char root_key[] = "root.key.pem";
+    const char root[] = "root.der";
+    const char root_key[] = "root.key.der";
     size_t path_off = path_for_key(cinfo->host, path, sizeof(path));
     if (path_off == 0) {
         fprintf(stderr, "Failed to access the directory with certificates\n");
@@ -500,7 +500,7 @@ static int load_key(
     ret = mbedtls_pk_parse_key(
         privkey,
         (unsigned char *)buf,
-        buf_len + 1, // including the terminator
+        buf_len,
         NULL,
         0,
         mbedtls_ctr_drbg_random,
@@ -522,7 +522,7 @@ static int load_key(
     ret = mbedtls_x509_crt_parse(
         pubkey,
         (unsigned char *)buf,
-        buf_len + 1 // including the terminator
+        buf_len
     );
     if (ret != 0) {
         fprintf(
@@ -728,37 +728,41 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out, s
     }
 
     // A normal certificate is 1500 bytes, allocate с горкой
-    unsigned char pem_bytes[4096] = {};
-    ret = mbedtls_x509write_crt_pem(
+    unsigned char buffer[4096] = {};
+    ret = mbedtls_x509write_crt_der(
         &cert,
-        pem_bytes,
-        sizeof(pem_bytes),
+        buffer,
+        sizeof(buffer),
         mbedtls_ctr_drbg_random,
         &ctr_drbg
     );
-    if (ret != 0) {
+    if (ret <= 0) {
         fprintf(stderr, "Failed to create certificate bytes\n");
         p.write_error(INTERNAL_CERT_BYTES);
         goto exit;
     }
-    size_t pem_bytes_len = strlen((char *)pem_bytes);
+    // Der writer uses a crazy scheme where bytes are written from the end of
+    // the buffer
+    size_t der_bytes_len = (size_t)ret;
+    char * der_bytes = (char *)buffer + sizeof(buffer) - der_bytes_len;
 
-    ret = write_all(fileno(cert_out), (char *)pem_bytes, pem_bytes_len);
+    ret = write_all(fileno(cert_out), (char *)der_bytes, der_bytes_len);
     if (ret != 0) {
         fprintf(stderr, "Failed to write cert bytes to file\n");
         p.write_error(INTERNAL_WRITE);
         goto exit;
     }
 
-    ret = mbedtls_pk_write_key_pem(&key, pem_bytes, sizeof(pem_bytes));
-    if (ret != 0) {
+    ret = mbedtls_pk_write_key_der(&key, buffer, sizeof(buffer));
+    if (ret <= 0) {
         fprintf(stderr, "Failed to create key bytes\n");
         p.write_error(INTERNAL_CERT_BYTES);
         goto exit;
     }
-    pem_bytes_len = strlen((char *)pem_bytes);
+    der_bytes_len = (size_t)ret;
+    der_bytes = (char *)buffer + sizeof(buffer) - der_bytes_len;
 
-    ret = write_all(fileno(key_out), (char *)pem_bytes, pem_bytes_len);
+    ret = write_all(fileno(key_out), (char *)der_bytes, der_bytes_len);
     if (ret != 0) {
         fprintf(stderr, "Failed to write key bytes to file\n");
         p.write_error(INTERNAL_WRITE);
@@ -792,10 +796,10 @@ static int keygen(const char * restrict domain, const struct output p) {
         }
     }
 
-    // Open root.pem and root.pem.key - naming for future support of subpaths
+    // Open root.der and root.key.der - naming for future support of subpaths
     // if I'm ever arsed
-    const char root[] = "root.pem";
-    const char root_key[] = "root.key.pem";
+    const char root[] = "root.der";
+    const char root_key[] = "root.key.der";
     if (path_off + sizeof(root_key) >= sizeof(path)) {
         fprintf(stderr, "Internal: requested path is too large\n");
         p.write_error(INTERNAL_PATH_SIZE);
