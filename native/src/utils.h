@@ -73,3 +73,6 @@ int is_writable(const char * restrict dir);
 /// Writes "$XDG_DATA_HOME/geminifox/" to buf, falling back to ~/.local/share
 /// Returns size of data written, or a zero value for error
 size_t data_home(char * restrict buf, size_t max_len);
+
+/// Fill the buffer with cryptographically random bytes, or return a negative number
+int random_buffer(void * /* context */, unsigned char * buf, size_t length);

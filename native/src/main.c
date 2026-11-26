@@ -4,8 +4,10 @@
 #include <errno.h>
 #include <netdb.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <sys/random.h>
@@ -321,30 +323,6 @@ static int tls_recv_callback(void * context, unsigned char * buf, size_t length)
     }
     return ret;
 }
-/// RNG for mbedtls
-static int random_buffer(void * /* context */, unsigned char * buf, size_t length) {
-#if defined(__linux__)
-    // On linux we use getrandom that may fail when filling the buffer, yay
-    while (length > 0) {
-        ssize_t ret = getrandom(buf, length, 0);
-        if (ret <= 0) {
-            if (errno == EINTR) {
-                continue;
-            } else {
-                // According to the man this can't happen, but we're being safe
-                return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
-            }
-        }
-        buf += ret;
-        length -= ret;
-    }
-    return 0;
-#else
-    // On non-musl we can use a single non-failing function
-    arc4random_buf(buf, length);
-    return 0;
-#endif
-}
 
 static int tls_handshake(
     int sock,
@@ -567,6 +545,7 @@ static int fetch_gemini(const struct connect_info * restrict cinfo, const struct
 
     // Verify the certificate - skipped
     // Will maybe add the check against a saved cert, but for now w/e
+    // See MBEDTLS_HAVE_TIME config if I ever want to add that
 
     // Write the request
     p.write_progress(SEND_REQUEST);
