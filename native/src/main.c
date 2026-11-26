@@ -8,13 +8,12 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
 #include "mbedtls/base64.h"
-#include "mbedtls/ctr_drbg.h"
-#include "mbedtls/entropy.h"
 #include "mbedtls/error.h"
 #include "mbedtls/net_sockets.h"
 #include "mbedtls/ssl.h"
@@ -264,8 +263,6 @@ exit:
 }
 
 struct tls_context {
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_ssl_context ssl;
     mbedtls_ssl_config conf;
     mbedtls_x509_crt cacert;
@@ -277,24 +274,8 @@ static struct tls_context new_tls_context() {
     mbedtls_ssl_init(&c.ssl);
     mbedtls_ssl_config_init(&c.conf);
     mbedtls_x509_crt_init(&c.cacert);
-    mbedtls_ctr_drbg_init(&c.ctr_drbg);
-    mbedtls_entropy_init(&c.entropy);
     mbedtls_pk_init(&c.privkey);
     mbedtls_x509_crt_init(&c.pubkey);
-
-    // Seed the rng
-    const char pers[] = "geminifox";
-    int ret = mbedtls_ctr_drbg_seed(
-        &c.ctr_drbg,
-        mbedtls_entropy_func,
-        &c.entropy,
-        (const unsigned char *)pers,
-        sizeof(pers)
-    );
-    if (ret != 0) {
-        fprintf(stderr, "mbedtls_ctr_drbg_seed failed with %d\n", ret);
-        abort();
-    }
 
     return c;
 }
@@ -304,8 +285,6 @@ static void free_tls_context(struct tls_context * restrict c) {
     mbedtls_x509_crt_free(&c->cacert);
     mbedtls_ssl_free(&c->ssl);
     mbedtls_ssl_config_free(&c->conf);
-    mbedtls_ctr_drbg_free(&c->ctr_drbg);
-    mbedtls_entropy_free(&c->entropy);
 }
 
 // Adapted from from mbedtls_net_send
@@ -342,6 +321,30 @@ static int tls_recv_callback(void * context, unsigned char * buf, size_t length)
     }
     return ret;
 }
+/// RNG for mbedtls
+static int random_buffer(void * /* context */, unsigned char * buf, size_t length) {
+#if defined(__linux__)
+    // On linux we use getrandom that may fail when filling the buffer, yay
+    while (length > 0) {
+        ssize_t ret = getrandom(buf, length, 0);
+        if (ret <= 0) {
+            if (errno == EINTR) {
+                continue;
+            } else {
+                // According to the man this can't happen, but we're being safe
+                return MBEDTLS_ERR_ENTROPY_SOURCE_FAILED;
+            }
+        }
+        buf += ret;
+        length -= ret;
+    }
+    return 0;
+#else
+    // On non-musl we can use a single non-failing function
+    arc4random_buf(buf, length);
+    return 0;
+#endif
+}
 
 static int tls_handshake(
     int sock,
@@ -368,7 +371,7 @@ static int tls_handshake(
     }
 
     // Setup rng for this config
-    mbedtls_ssl_conf_rng(&c->conf, mbedtls_ctr_drbg_random, &c->ctr_drbg);
+    mbedtls_ssl_conf_rng(&c->conf, random_buffer, NULL);
     // Disable ssl verification, as gemini certs are self-signed
     mbedtls_ssl_conf_authmode(&c->conf, MBEDTLS_SSL_VERIFY_OPTIONAL);
     mbedtls_ssl_conf_ca_chain(&c->conf, &c->cacert, NULL);
@@ -460,8 +463,6 @@ static int load_key(
     const struct connect_info * restrict cinfo,
     mbedtls_pk_context * restrict privkey,
     mbedtls_x509_crt * restrict pubkey,
-    /// A seeded rng for use with mbedtls_ctr_drbg_random
-    void * restrict p_rng,
     struct output p
 ) {
     int ret = -1;
@@ -503,8 +504,8 @@ static int load_key(
         buf_len,
         NULL,
         0,
-        mbedtls_ctr_drbg_random,
-        p_rng
+        random_buffer,
+        NULL
     );
     if (ret != 0) {
         fprintf(stderr, "Failed to parse private key at %s, code %d\n", path, ret);
@@ -553,7 +554,7 @@ static int fetch_gemini(const struct connect_info * restrict cinfo, const struct
         goto exit;
     }
 
-    ret = load_key(cinfo, &c.privkey, &c.pubkey, &c.ctr_drbg, p);
+    ret = load_key(cinfo, &c.privkey, &c.pubkey, p);
     if (ret != 0 && ret != 1) {
         goto exit;
     }
@@ -635,32 +636,14 @@ exit:
 static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out, struct output p) {
     int ret = -1;
 
-    mbedtls_entropy_context entropy;
-    mbedtls_ctr_drbg_context ctr_drbg;
     mbedtls_pk_context key;
     const mbedtls_pk_info_t * restrict pk_info;
     mbedtls_x509write_cert cert;
 
-    mbedtls_entropy_init(&entropy);
-    mbedtls_ctr_drbg_init(&ctr_drbg);
     mbedtls_pk_init(&key);
     mbedtls_x509write_crt_init(&cert);
 
     // Generate the key
-
-    const char pers[] = "ecdsa-p256-pk";
-    ret = mbedtls_ctr_drbg_seed(
-        &ctr_drbg,
-        mbedtls_entropy_func,
-        &entropy,
-        (const unsigned char *) pers,
-        sizeof(pers)
-    );
-    if (ret != 0) {
-        fprintf(stderr, "Failed to init randomness\n");
-        p.write_error(INTERNAL_INIT);
-        goto exit;
-    }
 
     pk_info = mbedtls_pk_info_from_type(MBEDTLS_PK_ECKEY);
     ret = mbedtls_pk_setup(&key, pk_info);
@@ -672,8 +655,8 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out, s
     ret = mbedtls_ecp_gen_key(
         MBEDTLS_ECP_DP_SECP256R1,
         mbedtls_pk_ec(key),
-        mbedtls_ctr_drbg_random,
-        &ctr_drbg
+        random_buffer,
+        NULL
     );
 
     // Create the certificate
@@ -733,8 +716,8 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out, s
         &cert,
         buffer,
         sizeof(buffer),
-        mbedtls_ctr_drbg_random,
-        &ctr_drbg
+        random_buffer,
+        NULL
     );
     if (ret <= 0) {
         fprintf(stderr, "Failed to create certificate bytes\n");
@@ -773,8 +756,6 @@ static int make_certificate(FILE * restrict cert_out, FILE * restrict key_out, s
 exit:
     mbedtls_x509write_crt_free(&cert);
     mbedtls_pk_free(&key);
-    mbedtls_ctr_drbg_free(&ctr_drbg);
-    mbedtls_entropy_free(&entropy);
     return ret;
 }
 
