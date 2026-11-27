@@ -10,7 +10,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <sys/random.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>

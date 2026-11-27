@@ -12,11 +12,12 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
 
-
 #include "mbedtls/base64.h"
+#include "mbedtls/entropy.h"
 
 #if 0
 void bytevec_append(struct bytevec * restrict vec, unsigned char * restrict buf, size_t length) {
@@ -233,7 +234,7 @@ int random_buffer(void * /* context */, unsigned char * buf, size_t length) {
             }
         }
         buf += ret;
-        length -= ret;
+        length -= (size_t)ret;
     }
     return 0;
 #else
