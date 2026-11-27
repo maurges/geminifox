@@ -8,13 +8,21 @@ ifneq ($(RELEASE),)
  AR := zig ar
  RANLIB := zig ranlib
  CFLAGS := -O3 -g0 -ffunction-sections -fdata-sections -fno-unwind-tables -fno-asynchronous-unwind-tables -flto -fvisibility=hidden -DNDEBUG
- LDFLAGS := -Wl,--gc-sections -Wl,-s -Wl,-dead_strip -Wl,--build-id=none
+ LDFLAGS := -Wl,--gc-sections -Wl,-s -Wl,--build-id=none
+
  ifeq ($(RELEASE),linux-amd64)
   CC := zig cc -target x86_64-linux-musl
  else ifeq ($(RELEASE),linux-aarch64)
   CC := zig cc -target aarch64-linux-musl
  else ifeq ($(RELEASE),mac)
+  LDFLAGS := $(LDFLAGS) -Wl,-dead_strip
   CC := zig cc -target aarch64-macos
+
+ else ifeq ($(RELEASE),native)
+  AR := ar
+  RANLIB := ranlib
+  CFLAGS := $(CFLAGS) -march=native
+
  else
   $(error Unknown RELEASE target '$(RELEASE)')
  endif
